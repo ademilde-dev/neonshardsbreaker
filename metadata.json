@@ -1,0 +1,6 @@
+{
+  "name": "Neon Shards Breaker",
+  "description": "Premium retro-futuristic brick breaker game with high-energy neon effects, custom ship store, live leaderboard, dynamic audio synth, and classic arcade physics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
