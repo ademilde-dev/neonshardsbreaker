@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import alienSprite from '../assets/alien.png';
 import { 
   Play, 
   Trophy, 
@@ -294,26 +295,62 @@ interface Alien {
   revealTick: number;
 }
 
-const ALIEN_PIXEL_SPRITE = [
-  '001111110000',
-  '011111111000',
-  '111011011100',
-  '111111111100',
-  '110111101100',
-  '110000001100',
-  '001001001000',
-  '010000000100'
-];
-const ALIEN_PIXEL_CELLS = ALIEN_PIXEL_SPRITE.flatMap((row, y) =>
-  [...row].flatMap((pixel, x) => pixel === '1' ? [{ x, y }] : [])
-);
+const ALIEN_REVEAL_COLUMNS = 10;
+const ALIEN_REVEAL_ROWS = 7;
+const ALIEN_REVEAL_CELLS = Array.from(
+  { length: ALIEN_REVEAL_COLUMNS * ALIEN_REVEAL_ROWS },
+  (_, index) => ({
+    column: index % ALIEN_REVEAL_COLUMNS,
+    row: Math.floor(index / ALIEN_REVEAL_COLUMNS)
+  })
+).sort((first, second) => {
+  const centerX = ALIEN_REVEAL_COLUMNS / 2;
+  const centerY = ALIEN_REVEAL_ROWS / 2;
+  const firstDistance = (first.column + 0.5 - centerX) ** 2 + (first.row + 0.5 - centerY) ** 2;
+  const secondDistance = (second.column + 0.5 - centerX) ** 2 + (second.row + 0.5 - centerY) ** 2;
+  return firstDistance - secondDistance;
+});
+const ALIEN_REVEAL_STEPS = ALIEN_REVEAL_CELLS.length;
+const BALL_LAUNCH_VX = 2.4;
+const BALL_LAUNCH_VY = -4.2;
+
+const drawAlienSprite = (
+  ctx: CanvasRenderingContext2D,
+  alien: Alien,
+  image: HTMLImageElement | null
+) => {
+  if (!image?.complete || image.naturalWidth === 0) return;
+
+  const spriteWidth = 72;
+  const spriteHeight = spriteWidth * image.naturalHeight / image.naturalWidth;
+  const sourceCellWidth = image.naturalWidth / ALIEN_REVEAL_COLUMNS;
+  const sourceCellHeight = image.naturalHeight / ALIEN_REVEAL_ROWS;
+  const destinationCellWidth = spriteWidth / ALIEN_REVEAL_COLUMNS;
+  const destinationCellHeight = spriteHeight / ALIEN_REVEAL_ROWS;
+
+  ctx.save();
+  ALIEN_REVEAL_CELLS.slice(0, alien.revealProgress).forEach(({ column, row }) => {
+    ctx.drawImage(
+      image,
+      column * sourceCellWidth,
+      row * sourceCellHeight,
+      sourceCellWidth,
+      sourceCellHeight,
+      alien.x - spriteWidth / 2 + column * destinationCellWidth,
+      alien.y - spriteHeight / 2 + row * destinationCellHeight,
+      destinationCellWidth,
+      destinationCellHeight
+    );
+  });
+  ctx.restore();
+};
 
 const createAlien = (index: number, count: number): Alien => ({
   x: 90 + ((index + 1) * 420) / (count + 1),
-  y: 48 + Math.random() * 45,
+  y: 42 + Math.random() * 38,
   vx: (Math.random() - 0.5) * 0.8,
   vy: (Math.random() - 0.5) * 0.5,
-  radius: 16,
+  radius: 34,
   directionChangeFrames: 60 + Math.floor(Math.random() * 120),
   revealProgress: 0,
   revealTick: 0
@@ -577,9 +614,25 @@ export default function Home() {
   const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const alienImageRef = useRef<HTMLImageElement | null>(null);
   // Ref síncrona para vidas — usada no loop do jogo para disparar sons
   // sem depender do ciclo de atualização do React state
   const livesRef = useRef(startingLives);
+
+  useEffect(() => {
+    const image = new Image();
+    image.onload = () => {
+      alienImageRef.current = image;
+    };
+    image.onerror = () => {
+      console.error('Não foi possível carregar o sprite do alien:', alienSprite.src);
+    };
+    image.src = alienSprite.src;
+
+    return () => {
+      alienImageRef.current = null;
+    };
+  }, []);
 
   // LEVEL LIST DEFINITIONS
   const levels: LevelDef[] = [
@@ -783,8 +836,8 @@ export default function Home() {
       {
         x: 300,
         y: 600,
-        vx: 3,
-        vy: -5,
+        vx: BALL_LAUNCH_VX,
+        vy: BALL_LAUNCH_VY,
         radius: 8
       }
     ];
@@ -809,8 +862,8 @@ export default function Home() {
         if (ball) {
           ball.x = stateRef.current.paddleX;
           ball.y = 660 - ball.radius;
-          ball.vx = 3;
-          ball.vy = -5;
+          ball.vx = BALL_LAUNCH_VX;
+          ball.vy = BALL_LAUNCH_VY;
           stateRef.current.awaitingBallLaunch = false;
         }
       }
@@ -841,8 +894,8 @@ export default function Home() {
       if (ball) {
         ball.x = stateRef.current.paddleX;
         ball.y = 660 - ball.radius;
-        ball.vx = 3;
-        ball.vy = -5;
+        ball.vx = BALL_LAUNCH_VX;
+        ball.vy = BALL_LAUNCH_VY;
         stateRef.current.awaitingBallLaunch = false;
       }
     }
@@ -969,8 +1022,8 @@ export default function Home() {
               state.balls.push({
                 x: state.paddleX,
                 y: paddleY - 20,
-                vx: (Math.random() - 0.5) * 6,
-                vy: -5 - Math.random() * 2,
+                vx: (Math.random() - 0.5) * 4,
+                vy: -3.8 - Math.random() * 1.2,
                 radius: 8
               });
             }
@@ -1020,7 +1073,7 @@ export default function Home() {
       });
 
       state.aliens.forEach(alien => {
-        if (alien.revealProgress < ALIEN_PIXEL_CELLS.length) {
+        if (alien.revealProgress < ALIEN_REVEAL_STEPS) {
           alien.revealTick++;
           if (alien.revealTick >= 2) {
             alien.revealTick = 0;
@@ -1030,7 +1083,7 @@ export default function Home() {
       });
 
       const allAliensRevealed = state.aliens.every(
-        alien => alien.revealProgress >= ALIEN_PIXEL_CELLS.length
+        alien => alien.revealProgress >= ALIEN_REVEAL_STEPS
       );
       if (allAliensRevealed) {
         state.aliens.forEach(alien => {
@@ -1049,9 +1102,9 @@ export default function Home() {
             alien.vx = -alien.vx;
             alien.x = Math.max(alien.radius + 8, Math.min(state.canvasWidth - alien.radius - 8, alien.x));
           }
-          if (alien.y < 38 || alien.y > 104) {
+          if (alien.y < 38 || alien.y > 85) {
             alien.vy = -alien.vy;
-            alien.y = Math.max(38, Math.min(104, alien.y));
+            alien.y = Math.max(38, Math.min(85, alien.y));
           }
         });
       }
@@ -1091,11 +1144,13 @@ export default function Home() {
         }
 
         const hitAlienIndex = state.aliens.findIndex(alien => {
-          if (alien.revealProgress < ALIEN_PIXEL_CELLS.length) return false;
+          if (alien.revealProgress < ALIEN_REVEAL_STEPS) return false;
           const dx = ball.x - alien.x;
           const dy = ball.y - alien.y;
-          const collisionDistance = ball.radius + alien.radius;
-          return dx * dx + dy * dy < collisionDistance * collisionDistance;
+          const horizontalReach = alien.radius + ball.radius;
+          const verticalReach = 30 + ball.radius;
+          return (dx * dx) / (horizontalReach * horizontalReach) +
+            (dy * dy) / (verticalReach * verticalReach) < 1;
         });
 
         if (hitAlienIndex >= 0) {
@@ -1224,10 +1279,12 @@ export default function Home() {
           const actSkin = state.equippedVaus || equippedVaus;
           const currentSpeed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
           const dynamicAcceleration = state.levelIndex === 0
-            ? 1.005
-            : (state.difficulty === 'hard' ? 1.05 : state.difficulty === 'easy' ? 1.01 : 1.025)
-              + Math.max(0, state.levelIndex - 1) * 0.005;
-          const maxBallSpeed = state.levelIndex === 0 ? 8 : Math.min(14, 10 + (state.levelIndex - 1) * 0.75);
+            ? 1.003
+            : (state.difficulty === 'hard' ? 1.015 : state.difficulty === 'easy' ? 1.004 : 1.008)
+              + Math.max(0, state.levelIndex - 1) * 0.001;
+          const maxBallSpeed = state.levelIndex === 0
+            ? 6.5
+            : Math.min(11.5, 8.5 + (state.levelIndex - 1) * 0.35);
           const speed = Math.min(maxBallSpeed, currentSpeed * dynamicAcceleration);
 
           ball.vx = speed * Math.sin(bounceAngle);
@@ -1358,23 +1415,7 @@ export default function Home() {
       });
 
       state.aliens.forEach(alien => {
-        ctx.save();
-        const pixelSize = 2.5;
-        const gap = 0.25;
-        const spriteWidth = ALIEN_PIXEL_SPRITE[0].length * pixelSize;
-        const spriteHeight = ALIEN_PIXEL_SPRITE.length * pixelSize;
-        ALIEN_PIXEL_CELLS.slice(0, alien.revealProgress).forEach(pixel => {
-          ctx.fillStyle = pixel.y < 2 ? '#ffcf66' : '#ff9d00';
-          ctx.shadowBlur = 5;
-          ctx.shadowColor = '#ff9d00';
-          ctx.fillRect(
-            alien.x - spriteWidth / 2 + pixel.x * pixelSize,
-            alien.y - spriteHeight / 2 + pixel.y * pixelSize,
-            pixelSize - gap,
-            pixelSize - gap
-          );
-        });
-        ctx.restore();
+        drawAlienSprite(ctx, alien, alienImageRef.current);
       });
 
       // RENDER BALLS
@@ -1859,23 +1900,36 @@ export default function Home() {
                       </div>
 
                       <div className="flex gap-2 w-full max-w-[240px]">
-                        <button 
-                          onClick={() => startGame(currentLevelIndex)}
-                          className="flex-1 py-3 bg-[#00f3ff] text-[#050505] font-sora font-extrabold text-xs tracking-wider rounded-lg active:scale-95 transition-all text-center cursor-pointer shadow-[0_0_10px_#00f3ff]"
-                        >
-                          RETRY MISSION
-                        </button>
+                        {showGameSummary === 'won' ? (
+                          <button
+                            onClick={() => {
+                              if (currentLevelIndex < levels.length - 1) {
+                                startGame(currentLevelIndex + 1);
+                              } else {
+                                setShowGameSummary(null);
+                                setActiveTab('menu');
+                              }
+                            }}
+                            className="flex-1 py-3 bg-[#00f3ff] text-[#050505] font-sora font-extrabold text-xs tracking-wider rounded-lg active:scale-95 transition-all text-center cursor-pointer shadow-[0_0_10px_#00f3ff]"
+                          >
+                            {currentLevelIndex < levels.length - 1 ? 'NEXT LEVEL' : 'CAMPAIGN COMPLETE'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => startGame(currentLevelIndex)}
+                            className="flex-1 py-3 bg-[#00f3ff] text-[#050505] font-sora font-extrabold text-xs tracking-wider rounded-lg active:scale-95 transition-all text-center cursor-pointer shadow-[0_0_10px_#00f3ff]"
+                          >
+                            RETRY MISSION
+                          </button>
+                        )}
                         <button 
                           onClick={() => {
-                            if (showGameSummary === 'won' && currentLevelIndex < levels.length - 1) {
-                              startGame(currentLevelIndex + 1);
-                            } else {
-                              setActiveTab('menu');
-                            }
+                            setShowGameSummary(null);
+                            setActiveTab('menu');
                           }}
                           className="flex-1 py-3 bg-[#353437] text-white font-mono text-xs tracking-wider rounded-lg active:scale-95 transition-all text-center cursor-pointer"
                         >
-                          {showGameSummary === 'won' && currentLevelIndex < levels.length - 1 ? 'NEXT LEVEL' : 'RETURN MENU'}
+                          RETURN MENU
                         </button>
                       </div>
                     </motion.div>
