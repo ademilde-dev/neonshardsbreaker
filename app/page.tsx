@@ -32,7 +32,7 @@ class SoundFX {
   public enabled: boolean = true;
 
   constructor() {
-    // Initialized lazily response to user interaction
+    // Initialized lazily on first user interaction
   }
 
   private initCtx() {
@@ -41,6 +41,31 @@ class SoundFX {
       if (AudioContextClass) {
         this.ctx = new AudioContextClass();
       }
+    }
+  }
+
+  /**
+   * Ensures the AudioContext is both created and in a running state.
+   * Browser autoplay policies suspend the context until a user gesture
+   * resumes it. This method awaits resume() to guarantee audio plays.
+   */
+  private async ensureCtx(): Promise<void> {
+    this.initCtx();
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+      } catch (e) {
+        console.warn('AudioContext resume failed:', e);
+      }
+    }
+  }
+
+  activate() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (this.ctx?.state === 'suspended') {
+      this.ctx.resume().catch((e) => console.warn('AudioContext resume failed:', e));
     }
   }
 
@@ -60,8 +85,8 @@ class SoundFX {
       osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(freq * 1.5, this.ctx.currentTime + 0.1);
 
-      gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.15);
 
       osc.start();
       osc.stop(this.ctx.currentTime + 0.15);
@@ -86,7 +111,7 @@ class SoundFX {
       osc.frequency.exponentialRampToValueAtTime(110, this.ctx.currentTime + 0.12);
 
       gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.15);
 
       osc.start();
       osc.stop(this.ctx.currentTime + 0.15);
@@ -111,8 +136,8 @@ class SoundFX {
         osc.type = 'square';
         osc.frequency.setValueAtTime(freq, this.ctx!.currentTime + idx * 0.06);
 
-        gain.gain.setValueAtTime(0.08, this.ctx!.currentTime + idx * 0.06);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx!.currentTime + idx * 0.06 + 0.12);
+        gain.gain.setValueAtTime(0.12, this.ctx!.currentTime + idx * 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx!.currentTime + idx * 0.06 + 0.12);
 
         osc.start(this.ctx!.currentTime + idx * 0.06);
         osc.stop(this.ctx!.currentTime + idx * 0.06 + 0.15);
@@ -122,28 +147,59 @@ class SoundFX {
     }
   }
 
-  playGameOver() {
+  // Som suave descendente tocado quando o jogador perde uma vida.
+  playBallLost() {
     if (!this.enabled) return;
     this.initCtx();
     if (!this.ctx) return;
 
     try {
-      const osc = this.ctx.createOscillator();
+      const now = this.ctx.currentTime;
+      const oscillator = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      osc.connect(gain);
+      oscillator.connect(gain);
       gain.connect(this.ctx.destination);
 
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(300, this.ctx.currentTime);
-      osc.frequency.linearRampToValueAtTime(75, this.ctx.currentTime + 0.8);
+      oscillator.type = 'triangle';
+      oscillator.frequency.setValueAtTime(320, now);
+      oscillator.frequency.linearRampToValueAtTime(85, now + 0.8);
+      gain.gain.setValueAtTime(0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
 
-      gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.8);
-
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.8);
+      oscillator.start();
+      oscillator.stop(now + 0.8);
     } catch (e) {
-      console.warn(e);
+      console.warn('playBallLost error:', e);
+    }
+  }
+
+  // Som tocado no GAME OVER real (sem mais vidas)
+  // Um tom mais sombrio e definitivo, porém ainda discreto
+  async playGameOver() {
+    if (!this.enabled) return;
+    await this.ensureCtx();
+    if (!this.ctx) return;
+
+    try {
+      const now = this.ctx.currentTime;
+
+      // Acorde descendente em duas vozes sobrepostas
+      const freqs = [130, 98]; // Sol2 → Ré2
+      freqs.forEach((startFreq, i) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(startFreq, now + i * 0.12);
+        osc.frequency.exponentialRampToValueAtTime(startFreq * 0.6, now + i * 0.12 + 1.0);
+        gain.gain.setValueAtTime(0.15, now + i * 0.12);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 1.1);
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(now + i * 0.12);
+        osc.stop(now + i * 0.12 + 1.2);
+      });
+    } catch (e) {
+      console.warn('playGameOver error:', e);
     }
   }
 
@@ -162,8 +218,8 @@ class SoundFX {
       osc.frequency.setValueAtTime(523.25, this.ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(1046.5, this.ctx.currentTime + 0.4);
 
-      gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+      gain.gain.setValueAtTime(0.25, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.5);
 
       osc.start();
       osc.stop(this.ctx.currentTime + 0.5);
@@ -227,8 +283,45 @@ interface Ball {
   radius: number;
 }
 
+interface Alien {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  directionChangeFrames: number;
+  revealProgress: number;
+  revealTick: number;
+}
+
+const ALIEN_PIXEL_SPRITE = [
+  '001111110000',
+  '011111111000',
+  '111011011100',
+  '111111111100',
+  '110111101100',
+  '110000001100',
+  '001001001000',
+  '010000000100'
+];
+const ALIEN_PIXEL_CELLS = ALIEN_PIXEL_SPRITE.flatMap((row, y) =>
+  [...row].flatMap((pixel, x) => pixel === '1' ? [{ x, y }] : [])
+);
+
+const createAlien = (index: number, count: number): Alien => ({
+  x: 90 + ((index + 1) * 420) / (count + 1),
+  y: 48 + Math.random() * 45,
+  vx: (Math.random() - 0.5) * 0.8,
+  vy: (Math.random() - 0.5) * 0.5,
+  radius: 16,
+  directionChangeFrames: 60 + Math.floor(Math.random() * 120),
+  revealProgress: 0,
+  revealTick: 0
+});
+
 interface LevelDef {
   name: string;
+  alienCount?: number;
   brickRows: {
     color: string;
     glowColor: string;
@@ -474,42 +567,108 @@ export default function Home() {
   const equippedVaus = paddles.find(p => p.equipped) || paddles[0];
 
   // GAME ENGINE STATES
+  const startingLives = process.env.NODE_ENV === 'development' ? 10 : 3;
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [lives, setLives] = useState(3);
+  const [lives, setLives] = useState(startingLives);
   const [score, setScore] = useState(0);
   const [gameCreditsEarned, setGameCreditsEarned] = useState(0);
   const [showGameSummary, setShowGameSummary] = useState<'won' | 'lost' | null>(null);
   const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Ref síncrona para vidas — usada no loop do jogo para disparar sons
+  // sem depender do ciclo de atualização do React state
+  const livesRef = useRef(startingLives);
 
   // LEVEL LIST DEFINITIONS
   const levels: LevelDef[] = [
     {
       name: "NEBULA GATE",
       brickRows: [
-        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1500, lives: 1 },
-        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1000, lives: 1 },
+        { color: '#008cff', glowColor: 'rgba(0,140,255,0.7)', points: 500, lives: 1 },
         { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 500, lives: 1 }
       ]
     },
     {
       name: "QUANTUM HORIZON",
       brickRows: [
-        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3000, lives: 2 }, // Double hit bricks
-        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1500, lives: 1 },
-        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1000, lives: 1 },
-        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 500, lives: 1 }
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 750, lives: 1 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 750, lives: 1 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1000, lives: 1 }
       ]
     },
     {
       name: "OMEGA VOID",
       brickRows: [
-        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3000, lives: 2 },
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3000, lives: 2 }, // Double hit bricks
         { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2000, lives: 1 },
         { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1500, lives: 1 },
         { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1000, lives: 1 }
+      ]
+    },
+    {
+      name: "EVENT HORIZON",
+      brickRows: [
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3500, lives: 2 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2500, lives: 2 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 2000, lives: 1 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1500, lives: 1 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1000, lives: 1 }
+      ]
+    },
+    {
+      name: "ALIEN OUTPOST",
+      alienCount: 1,
+      brickRows: [
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3500, lives: 2 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2500, lives: 2 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 2000, lives: 1 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1500, lives: 1 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1200, lives: 1 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1000, lives: 1 }
+      ]
+    },
+    {
+      name: "XENON SWARM",
+      alienCount: 2,
+      brickRows: [
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 4000, lives: 2 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 3000, lives: 2 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 2500, lives: 1 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 2000, lives: 1 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1600, lives: 1 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1300, lives: 1 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1000, lives: 1 }
+      ]
+    },
+    {
+      name: "STARFALL RAID",
+      alienCount: 3,
+      brickRows: [
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 4500, lives: 2 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 3500, lives: 2 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 2800, lives: 2 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 2300, lives: 1 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1800, lives: 1 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1400, lives: 1 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1100, lives: 1 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 900, lives: 1 }
+      ]
+    },
+    {
+      name: "VOID INVASION",
+      alienCount: 4,
+      brickRows: [
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 5000, lives: 2 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 4000, lives: 2 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 3200, lives: 2 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 2600, lives: 2 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2100, lives: 1 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1700, lives: 1 },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1300, lives: 1 },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1000, lives: 1 },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 800, lives: 1 }
       ]
     }
   ];
@@ -519,7 +678,11 @@ export default function Home() {
     paddleX: 300,
     paddleWidth: 120,
     targetPaddleWidth: 120,
+    widePaddleFramesRemaining: 0,
     balls: [] as Ball[],
+    aliens: [] as Alien[],
+    pendingAlienRespawns: [] as number[],
+    awaitingBallLaunch: false,
     powerups: [] as PowerUp[],
     particles: [] as Particle[],
     bricks: [] as {
@@ -536,6 +699,7 @@ export default function Home() {
     paddleTouchDirection: null as 'left' | 'right' | null,
     canvasWidth: 600,
     canvasHeight: 720,
+    levelIndex: 0,
     ballLaunchTimer: 0,
     keys: {} as Record<string, boolean>,
     score: 0,
@@ -546,10 +710,12 @@ export default function Home() {
 
   // START LOCAL GAME LOOP
   const startGame = (levelIdx: number) => {
+    sfx.activate();
     setActiveTab('play');
     setCurrentLevelIndex(levelIdx);
     setScore(0);
-    setLives(3);
+    setLives(startingLives);
+    livesRef.current = startingLives; // sincroniza a ref síncrona usada no loop do jogo
     setGameCreditsEarned(0);
     setShowGameSummary(null);
     setIsPlaying(true);
@@ -557,6 +723,7 @@ export default function Home() {
 
     stateRef.current.score = 0;
     stateRef.current.gameCreditsEarned = 0;
+    stateRef.current.levelIndex = levelIdx;
     stateRef.current.difficulty = difficulty;
     stateRef.current.equippedVaus = equippedVaus;
 
@@ -596,6 +763,11 @@ export default function Home() {
     });
 
     stateRef.current.bricks = bList;
+    stateRef.current.aliens = Array.from(
+      { length: lvl.alienCount ?? 0 },
+      (_, index) => createAlien(index, lvl.alienCount ?? 0)
+    );
+    stateRef.current.pendingAlienRespawns = [];
     stateRef.current.powerups = [];
     stateRef.current.particles = [];
     stateRef.current.paddleX = 300;
@@ -616,6 +788,7 @@ export default function Home() {
         radius: 8
       }
     ];
+    stateRef.current.awaitingBallLaunch = false;
 
     sfx.playPowerup();
   };
@@ -623,6 +796,24 @@ export default function Home() {
   // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isPlaying && !isPaused && !showGameSummary) sfx.activate();
+      if (
+        (e.code === 'Space' || e.key === ' ') &&
+        isPlaying &&
+        !isPaused &&
+        !showGameSummary &&
+        stateRef.current.awaitingBallLaunch
+      ) {
+        e.preventDefault();
+        const ball = stateRef.current.balls[0];
+        if (ball) {
+          ball.x = stateRef.current.paddleX;
+          ball.y = 660 - ball.radius;
+          ball.vx = 3;
+          ball.vy = -5;
+          stateRef.current.awaitingBallLaunch = false;
+        }
+      }
       stateRef.current.keys[e.key] = true;
     };
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -635,7 +826,7 @@ export default function Home() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [isPlaying, isPaused, showGameSummary]);
 
   // Touch / Drag pointer controls
   const isDraggingRef = useRef(false);
@@ -644,6 +835,17 @@ export default function Home() {
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isPlaying || isPaused || showGameSummary) return;
+    sfx.activate();
+    if (stateRef.current.awaitingBallLaunch) {
+      const ball = stateRef.current.balls[0];
+      if (ball) {
+        ball.x = stateRef.current.paddleX;
+        ball.y = 660 - ball.radius;
+        ball.vx = 3;
+        ball.vy = -5;
+        stateRef.current.awaitingBallLaunch = false;
+      }
+    }
     isDraggingRef.current = true;
     try {
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -716,11 +918,13 @@ export default function Home() {
         state.paddleX = Math.min(state.canvasWidth - state.paddleWidth / 2, state.paddleX + speedMultiplier);
       }
 
-      // Gradually decay custom paddle powerup width
-      if (state.paddleWidth > state.targetPaddleWidth) {
-        state.paddleWidth -= 0.15;
+      // Keep the wide-paddle powerup active, then fade back gradually.
+      if (state.widePaddleFramesRemaining > 0) {
+        state.widePaddleFramesRemaining--;
+      } else if (state.paddleWidth > state.targetPaddleWidth) {
+        state.paddleWidth = Math.max(state.targetPaddleWidth, state.paddleWidth - 0.03);
       } else if (state.paddleWidth < state.targetPaddleWidth) {
-        state.paddleWidth += 0.15;
+        state.paddleWidth = Math.min(state.targetPaddleWidth, state.paddleWidth + 0.03);
       }
 
       // UPDATE PARTICLES
@@ -771,8 +975,8 @@ export default function Home() {
               });
             }
           } else if (pu.type === 'wide') {
-            // Expands the paddle limit temporarily
             state.paddleWidth = Math.min(220, state.paddleWidth + 50);
+            state.widePaddleFramesRemaining = 1800;
           } else if (pu.type === 'slow') {
             // Slow down the velocities
             state.balls.forEach(b => {
@@ -815,9 +1019,63 @@ export default function Home() {
         return true;
       });
 
+      state.aliens.forEach(alien => {
+        if (alien.revealProgress < ALIEN_PIXEL_CELLS.length) {
+          alien.revealTick++;
+          if (alien.revealTick >= 2) {
+            alien.revealTick = 0;
+            alien.revealProgress++;
+          }
+        }
+      });
+
+      const allAliensRevealed = state.aliens.every(
+        alien => alien.revealProgress >= ALIEN_PIXEL_CELLS.length
+      );
+      if (allAliensRevealed) {
+        state.aliens.forEach(alien => {
+          alien.directionChangeFrames--;
+          if (alien.directionChangeFrames <= 0) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 0.2 + Math.random() * 0.35;
+            alien.vx = Math.cos(angle) * speed;
+            alien.vy = Math.sin(angle) * speed;
+            alien.directionChangeFrames = 90 + Math.floor(Math.random() * 150);
+          }
+
+          alien.x += alien.vx;
+          alien.y += alien.vy;
+          if (alien.x < alien.radius + 8 || alien.x > state.canvasWidth - alien.radius - 8) {
+            alien.vx = -alien.vx;
+            alien.x = Math.max(alien.radius + 8, Math.min(state.canvasWidth - alien.radius - 8, alien.x));
+          }
+          if (alien.y < 38 || alien.y > 104) {
+            alien.vy = -alien.vy;
+            alien.y = Math.max(38, Math.min(104, alien.y));
+          }
+        });
+      }
+
+      const now = performance.now();
+      state.pendingAlienRespawns = state.pendingAlienRespawns.filter(respawnAt => {
+        if (now < respawnAt) return true;
+        state.aliens.push(createAlien(
+          Math.floor(Math.random() * (stateRef.current.aliens.length + 1)),
+          levels[state.levelIndex].alienCount ?? 1
+        ));
+        return false;
+      });
+
       // PHYSICS UPDATE: BALLS
       let nextBallsList: Ball[] = [];
       state.balls.forEach(ball => {
+        if (state.awaitingBallLaunch) {
+          ball.x = state.paddleX;
+          ball.y = 660 - ball.radius;
+          nextBallsList.push(ball);
+          return;
+        }
+
         ball.x += ball.vx;
         ball.y += ball.vy;
 
@@ -830,6 +1088,44 @@ export default function Home() {
           ball.x = state.canvasWidth - ball.radius;
           ball.vx = -ball.vx;
           sfx.playPaddleHit();
+        }
+
+        const hitAlienIndex = state.aliens.findIndex(alien => {
+          if (alien.revealProgress < ALIEN_PIXEL_CELLS.length) return false;
+          const dx = ball.x - alien.x;
+          const dy = ball.y - alien.y;
+          const collisionDistance = ball.radius + alien.radius;
+          return dx * dx + dy * dy < collisionDistance * collisionDistance;
+        });
+
+        if (hitAlienIndex >= 0) {
+          const [alien] = state.aliens.splice(hitAlienIndex, 1);
+          state.pendingAlienRespawns.push(performance.now() + 2000);
+          const dx = ball.x - alien.x;
+          const dy = ball.y - alien.y;
+          const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+          const normalX = dx / distance;
+          const normalY = dy / distance;
+          const velocityAlongNormal = ball.vx * normalX + ball.vy * normalY;
+          ball.vx -= 2 * velocityAlongNormal * normalX;
+          ball.vy -= 2 * velocityAlongNormal * normalY;
+          ball.x = alien.x + normalX * (ball.radius + alien.radius);
+          ball.y = alien.y + normalY * (ball.radius + alien.radius);
+
+          state.score += 250;
+          setScore(state.score);
+          sfx.playBrickHit();
+          for (let i = 0; i < 14; i++) {
+            state.particles.push({
+              x: alien.x,
+              y: alien.y,
+              vx: (Math.random() - 0.5) * 5,
+              vy: (Math.random() - 0.5) * 5,
+              color: '#ff9d00',
+              alpha: 1,
+              size: Math.random() * 4 + 2
+            });
+          }
         }
 
         // Ceiling wall collision
@@ -927,9 +1223,12 @@ export default function Home() {
 
           const actSkin = state.equippedVaus || equippedVaus;
           const currentSpeed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
-          // Gently accelerate to maintain dynamic challenge
-          const dynamicAcceleration = state.difficulty === 'hard' ? 1.05 : state.difficulty === 'easy' ? 1.01 : 1.025;
-          const speed = Math.min(10, currentSpeed * dynamicAcceleration);
+          const dynamicAcceleration = state.levelIndex === 0
+            ? 1.005
+            : (state.difficulty === 'hard' ? 1.05 : state.difficulty === 'easy' ? 1.01 : 1.025)
+              + Math.max(0, state.levelIndex - 1) * 0.005;
+          const maxBallSpeed = state.levelIndex === 0 ? 8 : Math.min(14, 10 + (state.levelIndex - 1) * 0.75);
+          const speed = Math.min(maxBallSpeed, currentSpeed * dynamicAcceleration);
 
           ball.vx = speed * Math.sin(bounceAngle);
           ball.vy = -speed * Math.cos(bounceAngle);
@@ -958,30 +1257,31 @@ export default function Home() {
 
       // Handle no balls remaining
       if (state.balls.length === 0) {
-        setLives(prev => {
-          const next = prev - 1;
-          if (next > 0) {
-            // Respawn ball on paddle
-            state.balls.push({
-              x: state.paddleX,
-              y: 600,
-              vx: 3,
-              vy: -5,
-              radius: 8
-            });
-            sfx.playGameOver();
-          } else {
-            // Game Over loss state
-            setIsPlaying(false);
-            setShowGameSummary('lost');
-            sfx.playGameOver();
+        const nextLives = Math.max(0, livesRef.current - 1);
+        livesRef.current = nextLives;
+        setLives(nextLives);
+        sfx.playBallLost();
 
-            // Store game score if higher than current rank
-            updateCredits(state.gameCreditsEarned);
-            savePlayerHighScore(state.score);
-          }
-          return next;
-        });
+        if (nextLives > 0) {
+          // Respawn ball on paddle
+          state.balls.push({
+            x: state.paddleX,
+            y: 652,
+            vx: 0,
+            vy: 0,
+            radius: 8
+          });
+          state.awaitingBallLaunch = true;
+        } else {
+          // Game Over loss state
+          setIsPlaying(false);
+          setShowGameSummary('lost');
+          sfx.playGameOver();
+
+          // Store game score if higher than current rank
+          updateCredits(state.gameCreditsEarned);
+          savePlayerHighScore(state.score);
+        }
       }
 
       // Handle level clear victory state
@@ -1057,6 +1357,26 @@ export default function Home() {
         ctx.restore();
       });
 
+      state.aliens.forEach(alien => {
+        ctx.save();
+        const pixelSize = 2.5;
+        const gap = 0.25;
+        const spriteWidth = ALIEN_PIXEL_SPRITE[0].length * pixelSize;
+        const spriteHeight = ALIEN_PIXEL_SPRITE.length * pixelSize;
+        ALIEN_PIXEL_CELLS.slice(0, alien.revealProgress).forEach(pixel => {
+          ctx.fillStyle = pixel.y < 2 ? '#ffcf66' : '#ff9d00';
+          ctx.shadowBlur = 5;
+          ctx.shadowColor = '#ff9d00';
+          ctx.fillRect(
+            alien.x - spriteWidth / 2 + pixel.x * pixelSize,
+            alien.y - spriteHeight / 2 + pixel.y * pixelSize,
+            pixelSize - gap,
+            pixelSize - gap
+          );
+        });
+        ctx.restore();
+      });
+
       // RENDER BALLS
       state.balls.forEach(ball => {
         ctx.save();
@@ -1074,6 +1394,17 @@ export default function Home() {
         ctx.fill();
         ctx.restore();
       });
+
+      if (state.awaitingBallLaunch) {
+        ctx.save();
+        ctx.fillStyle = '#00f3ff';
+        ctx.font = 'bold 14px Space Mono';
+        ctx.textAlign = 'center';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#00f3ff';
+        ctx.fillText('PRESS SPACE OR TAP TO LAUNCH', state.canvasWidth / 2, 620);
+        ctx.restore();
+      }
 
       // LOOP AGAIN IF ACTIVE
       animFrame = requestAnimationFrame(gameUpdateAndRender);
@@ -1297,23 +1628,31 @@ export default function Home() {
 
                 {/* CAMPAIGN LEVEL SELECTOR */}
                 <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    onClick={() => startGame(0)}
-                    className="bg-[#1c1b1d]/80 backdrop-blur-md p-4 rounded-xl flex flex-col items-start gap-2 border border-[#3a494b] hover:border-[#ff24e4] hover:bg-white/5 active:scale-95 transition-all"
-                  >
-                    <Compass className="w-6 h-6 text-[#fface8]" />
-                    <span className="font-sora text-sm font-bold text-white text-left">Nebula Gate</span>
-                    <span className="font-mono text-[9px] text-[#849495]">LEVEL 01 • EASY</span>
-                  </button>
+                  {levels.slice(0, 4).map((level, index) => {
+                    const difficultyLabel = ['EASY', 'MEDIUM', 'HARD', 'EXPERT'][index];
 
-                  <button 
-                    onClick={() => startGame(1)}
-                    className="bg-[#1c1b1d]/80 backdrop-blur-md p-4 rounded-xl flex flex-col items-start gap-2 border border-[#3a494b] hover:border-[#ff24e4] hover:bg-white/5 active:scale-95 transition-all"
-                  >
-                    <Sparkles className="w-6 h-6 text-[#00dce6]" />
-                    <span className="font-sora text-sm font-bold text-white text-left">Quantum Void</span>
-                    <span className="font-mono text-[9px] text-[#849495]">LEVEL 02 • MEDIUM</span>
-                  </button>
+                    return (
+                      <button
+                        key={level.name}
+                        onClick={() => startGame(index)}
+                        className="bg-[#1c1b1d]/80 backdrop-blur-md p-4 rounded-xl flex flex-col items-start gap-2 border border-[#3a494b] hover:border-[#ff24e4] hover:bg-white/5 active:scale-95 transition-all"
+                      >
+                        {index === 0 ? (
+                          <Compass className="w-6 h-6 text-[#008cff]" />
+                        ) : index === 1 ? (
+                          <Sparkles className="w-6 h-6 text-[#00dce6]" />
+                        ) : index === 2 ? (
+                          <Zap className="w-6 h-6 text-[#ff24e4]" />
+                        ) : (
+                          <Target className="w-6 h-6 text-[#fface8]" />
+                        )}
+                        <span className="font-sora text-sm font-bold text-white text-left">{level.name}</span>
+                        <span className="font-mono text-[9px] text-[#849495]">
+                          LEVEL {(index + 1).toString().padStart(2, '0')} • {difficultyLabel}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* TUTORIAL INFO CARDS */}
@@ -1419,11 +1758,11 @@ export default function Home() {
 
                 <div className="bg-[#1c1b1d]/85 backdrop-blur-md border border-[#ff24e4]/30 px-2 py-1 md:px-3 md:py-1.5 rounded-lg flex flex-col items-end min-w-[85px] md:min-w-[110px]">
                   <span className="font-mono text-[8px] md:text-[9px] text-[#fface8] uppercase tracking-widest leading-none mb-1">LIVES</span>
-                  <div className="flex gap-1">
-                    {[1, 2, 3].map((heart) => (
+                  <div className="flex max-w-[105px] flex-wrap justify-end gap-0.5">
+                    {Array.from({ length: startingLives }, (_, index) => index + 1).map((heart) => (
                       <span 
                         key={heart} 
-                        className={`font-mono text-xs md:text-sm leading-none transition-all duration-300 ${heart <= lives ? 'text-[#ff24e4] scale-110 drop-shadow-[0_0_4px_#ff24e4]' : 'text-gray-600 opacity-30'}`}
+                        className={`font-mono text-[10px] leading-none transition-all duration-300 ${heart <= lives ? 'text-[#ff24e4] scale-110 drop-shadow-[0_0_4px_#ff24e4]' : 'text-gray-600 opacity-30'}`}
                       >
                         ❤
                       </span>
