@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import alienSprite from '../assets/alien.png';
+import iconArtwork from '../assets/icon.jpg';
 import { 
   Play, 
   Trophy, 
@@ -233,7 +234,7 @@ class SoundFX {
 const sfx = new SoundFX();
 
 // CORE APP TYPES
-type TabType = 'menu' | 'play' | 'store' | 'leaderboard';
+type TabType = 'menu' | 'play' | 'store' | 'leaderboard' | 'credits';
 
 interface Pilot {
   id: string;
@@ -369,9 +370,11 @@ interface LevelDef {
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
+  const [splashVisible, setSplashVisible] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('menu');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const backgroundMusicRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -379,6 +382,12 @@ export default function Home() {
     }, 10);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!mounted || !splashVisible) return;
+    const timer = setTimeout(() => setSplashVisible(false), 2550);
+    return () => clearTimeout(timer);
+  }, [mounted, splashVisible]);
 
   // LAZY STATE INITIALIZATIONS to prevent react-hooks/set-state-in-effect issues
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
@@ -613,6 +622,28 @@ export default function Home() {
   const [showGameSummary, setShowGameSummary] = useState<'won' | 'lost' | null>(null);
   const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
 
+  const startBackgroundMusic = useCallback((enabled = soundEnabled) => {
+    if (!enabled || splashVisible || activeTab === 'play' || isPlaying) return;
+
+    if (!backgroundMusicRef.current) {
+      backgroundMusicRef.current = new Audio('/assets/bg-music.mp3');
+      backgroundMusicRef.current.loop = true;
+      backgroundMusicRef.current.volume = 0.2;
+    }
+
+    void backgroundMusicRef.current.play().catch((error: unknown) => {
+      console.warn('Background music playback failed:', error);
+    });
+  }, [activeTab, isPlaying, soundEnabled, splashVisible]);
+
+  useEffect(() => {
+    if (!splashVisible && soundEnabled && activeTab !== 'play' && !isPlaying) {
+      startBackgroundMusic();
+    } else {
+      backgroundMusicRef.current?.pause();
+    }
+  }, [activeTab, isPlaying, soundEnabled, splashVisible, startBackgroundMusic]);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const alienImageRef = useRef<HTMLImageElement | null>(null);
   // Ref síncrona para vidas — usada no loop do jogo para disparar sons
@@ -763,6 +794,7 @@ export default function Home() {
 
   // START LOCAL GAME LOOP
   const startGame = (levelIdx: number) => {
+    backgroundMusicRef.current?.pause();
     sfx.activate();
     setActiveTab('play');
     setCurrentLevelIndex(levelIdx);
@@ -1498,7 +1530,141 @@ export default function Home() {
   }
 
   return (
-    <div className="relative flex flex-col min-h-screen bg-[#131315] font-sans selection:bg-[#ff24e4]/30 overflow-x-hidden md:pl-[0px]">
+    <div
+      className="relative flex flex-col min-h-screen bg-[#131315] font-sans selection:bg-[#ff24e4]/30 overflow-x-hidden md:pl-[0px]"
+      onPointerDown={() => startBackgroundMusic()}
+    >
+      <AnimatePresence>
+        {splashVisible && (
+          <motion.div
+            key="game-intro"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4, ease: 'easeInOut' }}
+            className="fixed inset-0 z-[100] flex flex-col items-center justify-center overflow-hidden bg-[#050510] px-5 text-center"
+            role="button"
+            aria-label="Pular abertura e entrar no jogo"
+            tabIndex={0}
+            onPointerDown={() => setSplashVisible(false)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setSplashVisible(false);
+              }
+            }}
+          >
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(20,27,81,0.55)_0%,rgba(5,5,16,0.98)_72%)]" />
+            <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(0,243,255,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(0,243,255,0.12)_1px,transparent_1px)] [background-size:42px_42px] [mask-image:linear-gradient(to_bottom,transparent,black,transparent)]" />
+
+            <div className="relative z-10 flex w-full max-w-md flex-col items-center">
+              <div className="relative h-64 w-full sm:h-72">
+                <div className="absolute inset-x-0 top-[27%] flex justify-center gap-2 sm:gap-3">
+                  {['#ff24e4', '#36fd0f', '#00f3ff', '#ff24e4', '#36fd0f'].map((color, index) => (
+                    <motion.div
+                      key={`brick-${index}`}
+                      initial={{ opacity: 1, scale: 1, rotate: 0 }}
+                      animate={{ opacity: 0, scale: 0.15, rotate: index % 2 ? 35 : -35, y: -12 }}
+                      transition={{ delay: 1.32 + (index % 2) * 0.04, duration: 0.36, ease: 'easeOut' }}
+                      className="h-5 w-11 rounded border-2 sm:h-6 sm:w-14"
+                      style={{
+                        borderColor: color,
+                        backgroundColor: `${color}30`,
+                        boxShadow: `0 0 10px ${color}, inset 0 0 8px ${color}80`,
+                      }}
+                    />
+                  ))}
+                </div>
+
+                {[0, 1].map((beam) => (
+                  <motion.div
+                    key={`laser-${beam}`}
+                    initial={{ opacity: 0, scaleY: 0 }}
+                    animate={{ opacity: [0, 1, 0], scaleY: [0, 1, 1] }}
+                    transition={{ delay: 0.94, duration: 0.5, ease: 'easeOut', times: [0, 0.35, 1] }}
+                    className="absolute top-[34%] h-[39%] w-1 origin-bottom rounded-full bg-[#b9ffff] shadow-[0_0_8px_3px_#00f3ff,0_0_22px_8px_#00f3ff]"
+                    style={{ left: beam === 0 ? '34%' : '66%' }}
+                  />
+                ))}
+
+                {Array.from({ length: 16 }, (_, index) => {
+                  const color = ['#00f3ff', '#ff24e4', '#36fd0f', '#ffffff'][index % 4];
+                  const direction = index % 2 === 0 ? -1 : 1;
+                  return (
+                    <motion.span
+                      key={`shard-${index}`}
+                      initial={{ opacity: 0, x: 0, y: 0, scale: 0.4, rotate: 0 }}
+                      animate={{
+                        opacity: [0, 1, 0],
+                        x: direction * (18 + (index % 5) * 15),
+                        y: -25 - (index % 4) * 13,
+                        scale: [0.4, 1, 0.2],
+                        rotate: direction * (45 + index * 13),
+                      }}
+                      transition={{ delay: 1.3 + (index % 5) * 0.025, duration: 0.65, ease: 'easeOut' }}
+                      className="absolute left-1/2 top-[30%] h-2 w-2"
+                      style={{
+                        backgroundColor: color,
+                        boxShadow: `0 0 10px ${color}, 0 0 18px ${color}`,
+                        clipPath: index % 2 ? 'polygon(50% 0, 100% 100%, 0 75%)' : 'polygon(50% 0, 100% 50%, 50% 100%, 0 50%)',
+                      }}
+                    />
+                  );
+                })}
+
+                <motion.svg
+                  viewBox="225 640 575 335"
+                  role="img"
+                  aria-label="Nave espacial disparando lasers"
+                  initial={{ opacity: 0, y: 55, scale: 0.78 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ delay: 0.18, duration: 0.7, type: 'spring', stiffness: 110, damping: 14 }}
+                  className="absolute bottom-[5%] left-1/2 h-32 w-56 -translate-x-1/2 overflow-visible"
+                  style={{ filter: 'drop-shadow(0 0 10px rgba(0,243,255,0.85)) drop-shadow(0 0 18px rgba(255,36,228,0.55))' }}
+                >
+                  <defs>
+                    <clipPath id="icon-spaceship-silhouette">
+                      <path d="M512 660 C476 662 451 686 440 720 L430 751 392 770 339 785 302 811 275 841 254 874 Q246 890 258 901 Q271 911 289 900 L320 879 367 884 386 923 Q395 944 416 945 L439 930 455 909 480 922 512 956 544 922 569 909 585 930 608 945 Q629 944 638 923 L657 884 704 879 735 900 Q753 911 766 901 Q778 890 770 874 L749 841 722 811 685 785 632 770 594 751 584 720 C573 686 548 662 512 660 Z" />
+                    </clipPath>
+                  </defs>
+                  <image
+                    href={iconArtwork.src}
+                    x="0"
+                    y="0"
+                    width="1024"
+                    height="1024"
+                    preserveAspectRatio="none"
+                    clipPath="url(#icon-spaceship-silhouette)"
+                  />
+                </motion.svg>
+              </div>
+
+              <motion.h1
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0, textShadow: ['0 0 8px #00f3ff, 0 0 20px #00f3ff', '0 0 16px #ff24e4, 0 0 34px #ff24e4'] }}
+                transition={{
+                  opacity: { delay: 1.62, duration: 0.4 },
+                  y: { delay: 1.62, duration: 0.4, type: 'spring' },
+                  textShadow: { delay: 2.05, duration: 1.1, repeat: Infinity, repeatType: 'reverse' },
+                }}
+                className="mt-1 font-sora text-2xl font-black tracking-[0.12em] text-white sm:text-3xl"
+              >
+                NEON SHARDS BREAKER
+              </motion.h1>
+            </div>
+
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0.45, 0.9, 0.45] }}
+              transition={{ delay: 1.8, duration: 1.2, repeat: Infinity }}
+              className="absolute bottom-8 z-10 font-mono text-[10px] tracking-[0.22em] text-[#00f3ff]/80"
+            >
+              TOQUE PARA PULAR
+            </motion.p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* SCANLINE EFFECT */}
       <div className="fixed inset-0 pointer-events-none z-50 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,6px_100%] animate-pulse" />
       <div className="fixed top-0 left-0 w-full h-[3px] bg-gradient-to-r from-transparent via-[#00f3ff]/40 to-transparent pointer-events-none z-50 animate-scanline" />
@@ -1509,7 +1675,7 @@ export default function Home() {
       />
 
       {/* TOP HEADER */}
-      <header className="fixed top-0 w-full z-40 bg-[#131315]/80 backdrop-blur-md border-b border-[#3a494b] shadow-md flex justify-between items-center px-6 py-3">
+      <header className="fixed top-0 w-full z-40 bg-[#131315]/80 backdrop-blur-md border-b border-[#3a494b] shadow-md flex justify-between items-center px-3 py-1 md:px-6 md:py-2">
         <button 
           onClick={() => setDrawerOpen(true)}
           className="text-[#00f3ff] hover:text-[#ff24e4] transition-colors p-2 active:scale-95"
@@ -1518,7 +1684,7 @@ export default function Home() {
           <Menu className="w-6 h-6" />
         </button>
 
-        <h1 className="font-sora text-xl md:text-2xl font-extrabold tracking-wider text-[#00f3ff] drop-shadow-[0_0_10px_rgba(0,243,255,0.7)]">
+        <h1 className="font-sora text-sm md:text-base font-bold tracking-wider whitespace-nowrap text-[#00f3ff] drop-shadow-[0_0_10px_rgba(0,243,255,0.7)]">
           NEON SHARDS BREAKER
         </h1>
 
@@ -1605,6 +1771,14 @@ export default function Home() {
                 >
                   <Trophy className="w-5 h-5 text-[#00dce6]" />
                   <span>Global Ranking</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('credits'); setDrawerOpen(false); }}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-sora font-medium text-sm text-left transition-colors ${activeTab === 'credits' ? 'bg-[#00f3ff]/10 text-[#00f3ff] border border-[#00f3ff]/30' : 'text-[#e5e1e4] hover:bg-white/5'}`}
+                >
+                  <Info className="w-5 h-5 text-[#ff24e4]" />
+                  <span>Credits &amp; Team</span>
                 </button>
               </nav>
 
@@ -1713,6 +1887,22 @@ export default function Home() {
                     <span className="font-mono text-[10px] text-[#849495]">Defeat obstacles with precision</span>
                   </div>
                   <ChevronRight className="w-5 h-5 text-[#849495]" />
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('credits')}
+                  className="group flex w-full items-center justify-between rounded-xl border border-[#00f3ff]/25 bg-[#10141b]/80 p-4 text-left transition-all hover:border-[#ff24e4]/60 hover:shadow-[0_0_18px_rgba(0,243,255,0.12)] active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-3">
+                    <span className="rounded-lg border border-[#ff24e4]/30 bg-[#ff24e4]/10 p-2 text-[#ff24e4]">
+                      <Info className="h-5 w-5" />
+                    </span>
+                    <span className="flex flex-col">
+                      <span className="font-sora text-sm font-bold text-white">Credits &amp; Team</span>
+                      <span className="font-mono text-[9px] tracking-wider text-[#849495]">MEET THE CREW BEHIND THE ARCADE</span>
+                    </span>
+                  </span>
+                  <ChevronRight className="h-5 w-5 text-[#00f3ff] transition-transform group-hover:translate-x-1" />
                 </button>
 
                 {/* ACTIVE SHIP CONTAINER */}
@@ -2270,6 +2460,136 @@ export default function Home() {
               </section>
             </motion.div>
           )}
+
+          {activeTab === 'credits' && (
+            <motion.div
+              key="credits"
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -14, scale: 0.98 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="relative isolate w-full max-w-md overflow-hidden rounded-3xl border border-[#00f3ff]/35 bg-[#070912]/95 p-6 shadow-[0_0_24px_rgba(0,243,255,0.12),0_0_50px_rgba(255,36,228,0.08)] sm:p-8"
+            >
+              <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_50%_15%,rgba(0,243,255,0.13),transparent_55%),radial-gradient(ellipse_at_90%_85%,rgba(255,36,228,0.1),transparent_45%)]" />
+              <div className="pointer-events-none absolute inset-0 -z-10 opacity-20 [background-image:linear-gradient(rgba(0,243,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(0,243,255,0.18)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:linear-gradient(to_bottom,black,transparent_90%)]" />
+
+              {Array.from({ length: 18 }, (_, index) => (
+                <motion.span
+                  key={`credit-star-${index}`}
+                  initial={{ opacity: 0.2, y: 0 }}
+                  animate={{ opacity: [0.15, 0.8, 0.15], y: [0, -8, 0] }}
+                  transition={{ duration: 2 + (index % 4) * 0.45, delay: (index % 6) * 0.2, repeat: Infinity, ease: 'easeInOut' }}
+                  className="pointer-events-none absolute h-1 w-1 rounded-full bg-[#b8fbff] shadow-[0_0_7px_2px_rgba(0,243,255,0.7)]"
+                  style={{ left: `${8 + ((index * 47) % 85)}%`, top: `${5 + ((index * 31) % 85)}%` }}
+                />
+              ))}
+
+              <div className="relative flex flex-col items-center text-center">
+                <motion.h2
+                  animate={{ textShadow: ['0 0 8px rgba(0,243,255,0.75), 0 0 18px rgba(0,243,255,0.4)', '0 0 10px rgba(255,36,228,0.8), 0 0 24px rgba(255,36,228,0.45)'] }}
+                  transition={{ duration: 1.8, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
+                  className="whitespace-nowrap font-sora text-[clamp(1rem,5vw,1.5rem)] font-black tracking-[0.08em] text-white"
+                >
+                  NEON SHARDS BREAKER
+                </motion.h2>
+
+                <motion.svg
+                  viewBox="60 315 910 650"
+                  role="img"
+                  aria-label="Nave disparando lasers e quebrando blocos neon"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: [0, -4, 0] }}
+                  transition={{ opacity: { duration: 0.45 }, y: { duration: 3, repeat: Infinity, ease: 'easeInOut' } }}
+                  className="my-4 h-44 w-full max-w-[320px] overflow-visible"
+                >
+                  <defs>
+                    <clipPath id="credits-bricks">
+                      <rect x="55" y="335" width="108" height="70" rx="10" />
+                      <rect x="170" y="335" width="108" height="70" rx="10" />
+                      <rect x="285" y="335" width="108" height="70" rx="10" />
+                      <rect x="400" y="335" width="108" height="70" rx="10" />
+                      <rect x="515" y="335" width="108" height="70" rx="10" />
+                      <rect x="630" y="335" width="108" height="70" rx="10" />
+                      <rect x="745" y="335" width="108" height="70" rx="10" />
+                      <rect x="860" y="335" width="108" height="70" rx="10" />
+                      <rect x="55" y="412" width="108" height="80" rx="10" />
+                      <rect x="170" y="412" width="108" height="80" rx="10" />
+                      <rect x="285" y="412" width="108" height="80" rx="10" />
+                      <rect x="400" y="412" width="108" height="80" rx="10" />
+                      <rect x="515" y="412" width="108" height="80" rx="10" />
+                      <rect x="630" y="412" width="108" height="80" rx="10" />
+                      <rect x="745" y="412" width="108" height="80" rx="10" />
+                      <rect x="860" y="412" width="108" height="80" rx="10" />
+                    </clipPath>
+                    <clipPath id="credits-ship-silhouette">
+                      <path d="M512 660 C476 662 451 686 440 720 L430 751 392 770 339 785 302 811 275 841 254 874 Q246 890 258 901 Q271 911 289 900 L320 879 367 884 386 923 Q395 944 416 945 L439 930 455 909 480 922 512 956 544 922 569 909 585 930 608 945 Q629 944 638 923 L657 884 704 879 735 900 Q753 911 766 901 Q778 890 770 874 L749 841 722 811 685 785 632 770 594 751 584 720 C573 686 548 662 512 660 Z" />
+                    </clipPath>
+                  </defs>
+
+                  <motion.line
+                    x1="430" y1="710" x2="300" y2="480"
+                    stroke="#ff24e4" strokeWidth="9" strokeLinecap="round"
+                    initial={{ opacity: 0.5 }}
+                    animate={{ opacity: [0.55, 1, 0.55] }}
+                    transition={{ duration: 0.8, repeat: Infinity, ease: 'easeInOut' }}
+                    style={{ filter: 'drop-shadow(0 0 8px #ff24e4)' }}
+                  />
+                  <motion.line
+                    x1="635" y1="710" x2="745" y2="480"
+                    stroke="#00f3ff" strokeWidth="9" strokeLinecap="round"
+                    initial={{ opacity: 0.5 }}
+                    animate={{ opacity: [0.55, 1, 0.55] }}
+                    transition={{ duration: 0.8, delay: 0.2, repeat: Infinity, ease: 'easeInOut' }}
+                    style={{ filter: 'drop-shadow(0 0 8px #00f3ff)' }}
+                  />
+                  <image
+                    href={iconArtwork.src}
+                    x="0" y="0" width="1024" height="1024"
+                    preserveAspectRatio="none"
+                    clipPath="url(#credits-bricks)"
+                  />
+                  <image
+                    href={iconArtwork.src}
+                    x="0" y="0" width="1024" height="1024"
+                    preserveAspectRatio="none"
+                    clipPath="url(#credits-ship-silhouette)"
+                    style={{ filter: 'drop-shadow(0 0 12px rgba(0,243,255,0.8)) drop-shadow(0 0 16px rgba(255,36,228,0.55))' }}
+                  />
+                </motion.svg>
+
+                <div className="mb-5 h-px w-full bg-gradient-to-r from-transparent via-[#00f3ff]/60 to-transparent" />
+
+                <section className="w-full space-y-5">
+                  <div>
+                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.35em] text-[#00f3ff]">CRIADOR</p>
+                    <p className="mt-1 font-sora text-lg font-bold text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]">Ademilde Martins Lanes</p>
+                  </div>
+
+                  <div>
+                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.35em] text-[#ff24e4]">TESTER</p>
+                    <p className="mt-1 font-sora text-lg font-bold text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]">Larissa Monteiro Lanes</p>
+                  </div>
+                </section>
+
+                <div className="my-5 h-px w-full bg-gradient-to-r from-transparent via-[#ff24e4]/55 to-transparent" />
+
+                <div className="flex flex-col items-center gap-3">
+                  <span className="rounded-full border border-[#00f3ff]/35 bg-[#00f3ff]/[0.07] px-4 py-1.5 font-mono text-[10px] tracking-wider text-[#b6c5ca] shadow-[0_0_12px_rgba(0,243,255,0.1)]">
+                    VERSÃO 1.0 <span className="px-1 text-[#00f3ff]">•</span> 2026
+                  </span>
+                  <p className="font-sora text-sm font-semibold tracking-wide text-white">© Lanes Technology IA</p>
+                </div>
+
+                <button
+                  onClick={() => setActiveTab('menu')}
+                  className="mt-7 flex items-center gap-2 rounded-lg border border-[#00f3ff]/60 bg-[#00f3ff]/[0.08] px-8 py-3 font-mono text-xs font-bold tracking-[0.25em] text-[#00f3ff] shadow-[0_0_14px_rgba(0,243,255,0.12)] transition-all hover:border-[#ff24e4] hover:bg-[#ff24e4]/10 hover:text-white hover:shadow-[0_0_18px_rgba(255,36,228,0.3)] active:scale-95"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  VOLTAR
+                </button>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
@@ -2306,6 +2626,11 @@ export default function Home() {
                       const enabled = !soundEnabled;
                       setSoundEnabled(enabled);
                       sfx.enabled = enabled;
+                      if (enabled) {
+                        startBackgroundMusic(true);
+                      } else {
+                        backgroundMusicRef.current?.pause();
+                      }
                       saveSettings(enabled, difficulty);
                     }}
                     className={`p-2 rounded-lg border transition-colors ${soundEnabled ? 'border-[#ff24e4] text-[#fface8] bg-[#ff24e4]/10' : 'border-gray-700 text-gray-500'}`}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Neon Shards Breaker</string>
+    <string name="title_activity_main">Neon Shards Breaker</string>
+    <string name="package_name">com.ademilde.neonshards</string>
+    <string name="custom_url_scheme">com.ademilde.neonshards</string>
+</resources>
