@@ -2,6 +2,10 @@
   "version": 4,
   "routes": {
     "/": {
+      "routeType": "page",
+      "response": "complete",
+      "compute": "static",
+      "htmlSize": 8603,
       "experimentalBypassFor": [
         {
           "type": "header",
@@ -26,6 +30,10 @@
       ]
     },
     "/_global-error": {
+      "routeType": "page",
+      "response": "complete",
+      "compute": "static",
+      "htmlSize": 8896,
       "experimentalBypassFor": [
         {
           "type": "header",
@@ -51,6 +59,10 @@
     },
     "/_not-found": {
       "initialStatus": 404,
+      "routeType": "page",
+      "response": "complete",
+      "compute": "static",
+      "htmlSize": 8322,
       "experimentalBypassFor": [
         {
           "type": "header",
@@ -78,8 +90,8 @@
   "dynamicRoutes": {},
   "notFoundRoutes": [],
   "preview": {
-    "previewModeId": "e65248bfe318b5bf905ae4cabd69c189",
-    "previewModeSigningKey": "b32b9bc4dcf7a9f0ce273a8f3ff1ee22b2b58af394580688a731d26856bf22e6",
-    "previewModeEncryptionKey": "4696a8cb204598c44bd0d6a2fbeb697306db72faf3631f1f25001d01b1759a02"
+    "previewModeId": "0d6e9c46ca8f512adbf9bbec32446e2d",
+    "previewModeSigningKey": "82502578c3875abf94cd33dace1598a6daabb17fbb120188f320caaa199cc09f",
+    "previewModeEncryptionKey": "acf073e340d463a2bf095007a466bd01658cb66dc4a8470579147cef3fdb1e7e"
   }
 }
