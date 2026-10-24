@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.ademilde.neonshards',
+  appId: 'com.neonshards.breaker',
   appName: 'Neon Shards Breaker',
   webDir: 'out'
 };

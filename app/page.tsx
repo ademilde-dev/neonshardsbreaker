@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { AdMob, RewardAdOptions, RewardAdPluginEvents } from '@capacitor-community/admob';
+import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import alienSprite from '../assets/alien.png';
 import iconArtwork from '../assets/icon.jpg';
 import { 
@@ -27,6 +29,16 @@ import {
   Zap,
   Target
 } from 'lucide-react';
+
+const useTestRewardAds = process.env.NODE_ENV !== 'production' ||
+  process.env.NEXT_PUBLIC_ADMOB_TESTING !== 'false';
+
+const rewardAdOptions: RewardAdOptions = {
+  adId: useTestRewardAds
+    ? 'ca-app-pub-3940256099942544/5224354917'
+    : 'ca-app-pub-3441770031183773/5052235792',
+  isTesting: useTestRewardAds,
+};
 
 // SOUND ENGINE USING WEB AUDIO API
 class SoundFX {
@@ -247,6 +259,25 @@ interface Pilot {
   isYou?: boolean;
 }
 
+const isPilotArray = (value: unknown): value is Pilot[] => {
+  if (!Array.isArray(value)) return false;
+
+  return value.every((pilot: unknown) => {
+    if (typeof pilot !== 'object' || pilot === null) return false;
+    const candidate = pilot as Partial<Pilot>;
+
+    return typeof candidate.id === 'string'
+      && typeof candidate.rank === 'string'
+      && typeof candidate.name === 'string'
+      && typeof candidate.score === 'number'
+      && Number.isFinite(candidate.score)
+      && typeof candidate.levelText === 'string'
+      && typeof candidate.avatar === 'string'
+      && (candidate.isVIP === undefined || typeof candidate.isVIP === 'boolean')
+      && (candidate.isYou === undefined || typeof candidate.isYou === 'boolean');
+  });
+};
+
 interface PaddleSkin {
   id: string;
   name: string;
@@ -259,6 +290,30 @@ interface PaddleSkin {
   unlocked: boolean;
   equipped: boolean;
 }
+
+const isPaddleSkinArray = (value: unknown): value is PaddleSkin[] => {
+  if (!Array.isArray(value) || value.length === 0) return false;
+
+  return value.every((skin: unknown) => {
+    if (typeof skin !== 'object' || skin === null) return false;
+    const candidate = skin as Partial<PaddleSkin>;
+
+    return typeof candidate.id === 'string'
+      && typeof candidate.name === 'string'
+      && typeof candidate.description === 'string'
+      && typeof candidate.price === 'number'
+      && Number.isFinite(candidate.price)
+      && candidate.price >= 0
+      && typeof candidate.color === 'string'
+      && typeof candidate.secondaryColor === 'string'
+      && typeof candidate.widthMultiplier === 'number'
+      && Number.isFinite(candidate.widthMultiplier)
+      && candidate.widthMultiplier > 0
+      && typeof candidate.glowColor === 'string'
+      && typeof candidate.unlocked === 'boolean'
+      && typeof candidate.equipped === 'boolean';
+  });
+};
 
 interface PowerUp {
   x: number;
@@ -392,24 +447,43 @@ export default function Home() {
   // LAZY STATE INITIALIZATIONS to prevent react-hooks/set-state-in-effect issues
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('neonsharks_sound');
-      if (saved) return saved === 'true';
+      try {
+        const saved = window.localStorage.getItem('neonsharks_sound');
+        if (saved !== null) return saved === 'true';
+      } catch (error) {
+        console.warn('Unable to load saved NeonSharks sound setting.', error);
+      }
     }
     return true;
   });
 
   const [difficulty, setDifficulty] = useState<'easy' | 'normal' | 'hard'>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('neonsharks_difficulty');
-      if (saved) return saved as any;
+      try {
+        const saved = window.localStorage.getItem('neonsharks_difficulty');
+        if (saved === 'easy' || saved === 'normal' || saved === 'hard') return saved;
+        if (saved !== null) console.warn('Ignoring invalid saved NeonSharks difficulty.');
+      } catch (error) {
+        console.warn('Unable to load saved NeonSharks difficulty.', error);
+      }
     }
     return 'normal';
   });
 
   const [credits, setCredits] = useState<number>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('neonsharks_credits');
-      if (saved) return parseInt(saved, 10);
+      try {
+        const saved = window.localStorage.getItem('neonsharks_credits');
+        if (saved !== null) {
+          const parsedCredits = Number(saved);
+          if (saved.trim() !== '' && Number.isSafeInteger(parsedCredits) && parsedCredits >= 0) {
+            return parsedCredits;
+          }
+          console.warn('Ignoring invalid saved NeonSharks credits.');
+        }
+      } catch (error) {
+        console.warn('Unable to load saved NeonSharks credits.', error);
+      }
     }
     return 12450;
   });
@@ -467,11 +541,15 @@ export default function Home() {
     ];
 
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('neonsharks_paddles');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch(e) {}
+      try {
+        const saved = window.localStorage.getItem('neonsharks_paddles');
+        if (saved) {
+          const parsedPaddles: unknown = JSON.parse(saved);
+          if (isPaddleSkinArray(parsedPaddles)) return parsedPaddles;
+          console.warn('Ignoring invalid saved NeonSharks paddle data.');
+        }
+      } catch (error) {
+        console.warn('Unable to load saved NeonSharks paddle data.', error);
       }
     }
     return initialPaddles;
@@ -524,11 +602,15 @@ export default function Home() {
     ];
 
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('neonsharks_leaderboard');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch(e) {}
+      try {
+        const saved = window.localStorage.getItem('neonsharks_leaderboard');
+        if (saved) {
+          const parsedLeaderboard: unknown = JSON.parse(saved);
+          if (isPilotArray(parsedLeaderboard)) return parsedLeaderboard;
+          console.warn('Ignoring invalid saved NeonSharks leaderboard data.');
+        }
+      } catch (error) {
+        console.warn('Unable to load saved NeonSharks leaderboard data.', error);
       }
     }
     return initialLeaderboard;
@@ -621,6 +703,10 @@ export default function Home() {
   const [gameCreditsEarned, setGameCreditsEarned] = useState(0);
   const [showGameSummary, setShowGameSummary] = useState<'won' | 'lost' | null>(null);
   const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
+  const [rewardAdReady, setRewardAdReady] = useState(false);
+  const [rewardAdLoading, setRewardAdLoading] = useState(false);
+  const [rewardAdError, setRewardAdError] = useState<string | null>(null);
+  const reviveRequestedRef = useRef(false);
 
   const startBackgroundMusic = useCallback((enabled = soundEnabled) => {
     if (!enabled || splashVisible || activeTab === 'play' || isPlaying) return;
@@ -791,6 +877,122 @@ export default function Home() {
     difficulty: 'normal' as 'easy' | 'normal' | 'hard',
     equippedVaus: null as any
   });
+
+  const prepareRewardAd = useCallback(async () => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    setRewardAdLoading(true);
+    setRewardAdError(null);
+    try {
+      await AdMob.prepareRewardVideoAd(rewardAdOptions);
+      setRewardAdReady(true);
+    } catch (error) {
+      console.error('Failed to prepare rewarded ad:', error);
+      setRewardAdReady(false);
+      setRewardAdError('ANÚNCIO INDISPONÍVEL. TENTE NOVAMENTE.');
+    } finally {
+      setRewardAdLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let disposed = false;
+    let rewardListener: PluginListenerHandle | undefined;
+    let dismissedListener: PluginListenerHandle | undefined;
+
+    const initializeAdMob = async () => {
+      try {
+        const listener = await AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
+          if (!reviveRequestedRef.current) return;
+
+          reviveRequestedRef.current = false;
+          const revivedLives = livesRef.current + 1;
+          livesRef.current = revivedLives;
+          setLives(revivedLives);
+
+          const gameState = stateRef.current;
+          gameState.balls = [{
+            x: gameState.paddleX,
+            y: 652,
+            vx: 0,
+            vy: 0,
+            radius: 8,
+          }];
+          gameState.awaitingBallLaunch = true;
+
+          setShowGameSummary(null);
+          setIsPaused(false);
+          setIsPlaying(true);
+          sfx.activate();
+        });
+        if (disposed) {
+          void listener.remove();
+          return;
+        }
+        rewardListener = listener;
+
+        const dismissalListener = await AdMob.addListener(RewardAdPluginEvents.Dismissed, () => {
+          if (!reviveRequestedRef.current) return;
+
+          reviveRequestedRef.current = false;
+          setRewardAdLoading(false);
+          void prepareRewardAd();
+        });
+        if (disposed) {
+          void dismissalListener.remove();
+          return;
+        }
+        dismissedListener = dismissalListener;
+
+        await AdMob.initialize();
+        if (!disposed) await prepareRewardAd();
+      } catch (error) {
+        console.error('Failed to initialize AdMob:', error);
+        if (!disposed) {
+          setRewardAdError('NÃO FOI POSSÍVEL INICIALIZAR OS ANÚNCIOS.');
+        }
+      }
+    };
+
+    void initializeAdMob();
+
+    return () => {
+      disposed = true;
+      reviveRequestedRef.current = false;
+      if (rewardListener) void rewardListener.remove();
+      if (dismissedListener) void dismissedListener.remove();
+    };
+  }, [prepareRewardAd]);
+
+  const handleReviveWithAd = async () => {
+    if (rewardAdLoading || showGameSummary !== 'lost') return;
+    if (!rewardAdReady) {
+      void prepareRewardAd();
+      return;
+    }
+
+    reviveRequestedRef.current = true;
+    setRewardAdReady(false);
+    setRewardAdLoading(true);
+    setRewardAdError(null);
+
+    let showFailed = false;
+    try {
+      await AdMob.showRewardVideoAd({ adId: rewardAdOptions.adId });
+    } catch (error) {
+      if (reviveRequestedRef.current) {
+        reviveRequestedRef.current = false;
+        showFailed = true;
+        console.error('Failed to show rewarded ad:', error);
+        setRewardAdError('NÃO FOI POSSÍVEL EXIBIR O ANÚNCIO. TENTE NOVAMENTE.');
+      }
+    } finally {
+      setRewardAdLoading(false);
+      if (!showFailed) void prepareRewardAd();
+    }
+  };
 
   // START LOCAL GAME LOOP
   const startGame = (levelIdx: number) => {
@@ -1907,7 +2109,7 @@ export default function Home() {
 
                 {/* ACTIVE SHIP CONTAINER */}
                 <div className="bg-[#1c1b1d]/60 backdrop-blur-md p-5 rounded-xl border border-[#00f3ff]/20 relative overflow-hidden">
-                  <div className="absolute top-2 right-2 opacity-10">
+                  <div className="pointer-events-none absolute top-2 right-2 opacity-10">
                     <Zap className="w-20 h-20 text-[#00f3ff]" />
                   </div>
 
@@ -1929,7 +2131,12 @@ export default function Home() {
                   </div>
 
                   {/* MINI SHIP PREVIEW ANIMATION */}
-                  <div className="h-20 bg-black/40 rounded-lg flex flex-col items-center justify-center p-3 relative overflow-hidden group">
+                  <button
+                    type="button"
+                    aria-label="Open the NeonSharks Store to browse capsules and skins"
+                    onClick={() => setActiveTab('store')}
+                    className="group relative flex h-20 w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-lg bg-black/40 p-3 transition-colors hover:bg-black/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#00f3ff] active:scale-[0.99]"
+                  >
                     <motion.div 
                       animate={{ y: [0, -6, 0] }}
                       transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
@@ -1943,8 +2150,8 @@ export default function Home() {
                       <span className="w-1.5 h-1.5 rounded-full bg-white/35"></span>
                       <span className="w-1.5 h-1.5 rounded-full bg-white/35"></span>
                     </motion.div>
-                    <span className="font-mono text-[9px] text-[#849495] mt-2">CAPSULE CORE SYNCHRONIZED</span>
-                  </div>
+                    <span className="mt-2 font-mono text-[9px] text-[#849495]">CAPSULE CORE SYNCHRONIZED</span>
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -1990,7 +2197,7 @@ export default function Home() {
                 <div className="bg-[#1c1b1d]/85 backdrop-blur-md border border-[#ff24e4]/30 px-2 py-1 md:px-3 md:py-1.5 rounded-lg flex flex-col items-end min-w-[85px] md:min-w-[110px]">
                   <span className="font-mono text-[8px] md:text-[9px] text-[#fface8] uppercase tracking-widest leading-none mb-1">LIVES</span>
                   <div className="flex max-w-[105px] flex-wrap justify-end gap-0.5">
-                    {Array.from({ length: startingLives }, (_, index) => index + 1).map((heart) => (
+                    {Array.from({ length: Math.max(startingLives, lives) }, (_, index) => index + 1).map((heart) => (
                       <span 
                         key={heart} 
                         className={`font-mono text-[10px] leading-none transition-all duration-300 ${heart <= lives ? 'text-[#ff24e4] scale-110 drop-shadow-[0_0_4px_#ff24e4]' : 'text-gray-600 opacity-30'}`}
@@ -2088,6 +2295,27 @@ export default function Home() {
                           </div>
                         ) : null}
                       </div>
+
+                      {showGameSummary === 'lost' && (
+                        <div className="mb-4 flex w-full max-w-[240px] flex-col items-center gap-2">
+                          <button
+                            onClick={handleReviveWithAd}
+                            disabled={rewardAdLoading || (!rewardAdReady && !rewardAdError)}
+                            className="w-full rounded-lg border border-[#36fd0f]/70 bg-[#36fd0f]/10 py-3 font-sora text-xs font-extrabold tracking-wider text-[#36fd0f] shadow-[0_0_14px_rgba(54,253,15,0.2)] transition-all hover:bg-[#36fd0f]/20 hover:shadow-[0_0_20px_rgba(54,253,15,0.4)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            REVIVER (+1 VIDA)
+                          </button>
+                          <span aria-live="polite" className="font-mono text-[9px] tracking-wider text-[#849495]">
+                            {rewardAdError
+                              ? rewardAdError
+                              : rewardAdLoading
+                                ? 'PREPARANDO ANÚNCIO PREMIADO...'
+                                : rewardAdReady
+                                  ? 'ASSISTA AO ANÚNCIO PARA CONTINUAR'
+                                  : 'DISPONÍVEL NA VERSÃO NATIVA'}
+                          </span>
+                        </div>
+                      )}
 
                       <div className="flex gap-2 w-full max-w-[240px]">
                         {showGameSummary === 'won' ? (
