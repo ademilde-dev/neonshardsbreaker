@@ -27,7 +27,8 @@ import {
   Sparkles,
   Award,
   Zap,
-  Target
+  Target,
+  Lock
 } from 'lucide-react';
 
 const useTestRewardAds = process.env.NODE_ENV !== 'production' ||
@@ -332,6 +333,15 @@ interface Particle {
   size: number;
 }
 
+interface Shockwave {
+  x: number;
+  y: number;
+  radius: number;
+  maxRadius: number;
+  color: string;
+  alpha: number;
+}
+
 interface Ball {
   x: number;
   y: number;
@@ -369,6 +379,17 @@ const ALIEN_REVEAL_CELLS = Array.from(
 const ALIEN_REVEAL_STEPS = ALIEN_REVEAL_CELLS.length;
 const BALL_LAUNCH_VX = 2.4;
 const BALL_LAUNCH_VY = -4.2;
+const SPECIAL_LEVEL_PALETTES: readonly (readonly string[])[] = [
+  ['#00eaff', '#ff24e4', '#a6ff00', '#ff7a00'],
+  ['#ff4d00', '#ffd400', '#ff2d55', '#ff8a00'],
+  ['#00eaff', '#4d5bff', '#bd42ff', '#ff24e4'],
+  ['#ff24e4', '#00eaff', '#a6ff00', '#ff7a00'],
+  ['#ff4d00', '#ff24e4', '#ffd400', '#00eaff'],
+  ['#a742ff', '#00eaff', '#a6ff00', '#ff24e4'],
+  ['#ff24e4', '#00eaff', '#a6ff00', '#ff7a00'],
+  ['#ffd400', '#00eaff', '#ff3b5c', '#a6ff00'],
+  ['#00eaff', '#a742ff', '#ff24e4', '#a6ff00']
+];
 
 const drawAlienSprite = (
   ctx: CanvasRenderingContext2D,
@@ -412,21 +433,190 @@ const createAlien = (index: number, count: number): Alien => ({
   revealTick: 0
 });
 
+type BrickType = 'standard' | 'bomb' | 'shielded' | 'glider';
+
+interface BrickRowDefinition {
+  color: string;
+  glowColor: string;
+  points: number;
+  lives: number;
+  type?: BrickType;
+  pattern?: string;
+}
+
 interface LevelDef {
   name: string;
   alienCount?: number;
-  brickRows: {
-    color: string;
-    glowColor: string;
-    points: number;
-    lives: number;
-  }[];
+  brickRows: BrickRowDefinition[];
 }
+
+interface BrickState {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+  glowColor: string;
+  points: number;
+  lives: number;
+  maxLives: number;
+  type: BrickType;
+  baseX: number;
+  baseY: number;
+  phase: number;
+  direction: number;
+}
+
+const normalizeBrickType = (value?: string): BrickType => {
+  switch (value) {
+    case 'bomb':
+    case 'b':
+      return 'bomb';
+    case 'shielded':
+    case 'h':
+      return 'shielded';
+    case 'glider':
+    case 'g':
+      return 'glider';
+    case 'standard':
+    case 's':
+    default:
+      return 'standard';
+  }
+};
+
+const emitBrickBurst = (
+  particles: Particle[],
+  x: number,
+  y: number,
+  color: string,
+  count: number,
+  spread = 6
+) => {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x,
+      y,
+      vx: (Math.random() - 0.5) * spread,
+      vy: (Math.random() - 0.5) * spread,
+      color,
+      alpha: 1,
+      size: Math.random() * 4 + 2
+    });
+  }
+};
+
+const destroyBrickAndReward = (
+  state: {
+    score: number;
+    gameCreditsEarned: number;
+    bricks: BrickState[];
+    particles: Particle[];
+    powerups: PowerUp[];
+  },
+  brick: BrickState,
+  setScore: (value: number) => void,
+  setGameCreditsEarned: (value: number) => void
+) => {
+  state.score += brick.points;
+  setScore(state.score);
+  state.gameCreditsEarned += Math.ceil(brick.points / 100);
+  setGameCreditsEarned(state.gameCreditsEarned);
+
+  if (Math.random() < 0.22) {
+    const types: ('multiball' | 'wide' | 'slow' | 'credits')[] = ['multiball', 'wide', 'slow', 'credits'];
+    const selectType = types[Math.floor(Math.random() * types.length)];
+    state.powerups.push({
+      x: brick.x + brick.width / 2,
+      y: brick.y + brick.height,
+      type: selectType,
+      radius: 12
+    });
+  }
+
+  emitBrickBurst(state.particles, brick.x + brick.width / 2, brick.y + brick.height / 2, brick.color, 20, 7);
+};
+
+const awardShieldedImpact = (
+  state: { score: number },
+  brick: BrickState,
+  setScore: (value: number) => void
+) => {
+  const impactNumber = brick.maxLives - brick.lives;
+  const impactPoints = Math.max(1, Math.round(brick.points * (0.1 + (impactNumber - 1) * 0.05)));
+  state.score += impactPoints;
+  setScore(state.score);
+};
+
+const triggerBombExplosion = (
+  state: {
+    bricks: BrickState[];
+    particles: Particle[];
+    shockwaves: Shockwave[];
+    score: number;
+    gameCreditsEarned: number;
+    powerups: PowerUp[];
+  },
+  source: BrickState,
+  setScore: (value: number) => void,
+  setGameCreditsEarned: (value: number) => void
+) => {
+  const pendingBombs = [source];
+  const detonatedBombs = new Set<BrickState>();
+
+  while (pendingBombs.length > 0) {
+    const bomb = pendingBombs.shift();
+    if (!bomb || detonatedBombs.has(bomb)) continue;
+    detonatedBombs.add(bomb);
+    bomb.lives = 0;
+
+    const centerX = bomb.x + bomb.width / 2;
+    const centerY = bomb.y + bomb.height / 2;
+    const cellWidth = bomb.width + 6;
+    const cellHeight = bomb.height + 6;
+
+    state.shockwaves.push({
+      x: centerX,
+      y: centerY,
+      radius: 4,
+      maxRadius: Math.max(cellWidth, cellHeight) * 1.65,
+      color: '#ffe66d',
+      alpha: 1
+    });
+    emitBrickBurst(state.particles, centerX, centerY, '#ff9f43', 30, 10);
+    destroyBrickAndReward(state, bomb, setScore, setGameCreditsEarned);
+
+    state.bricks.forEach((brick) => {
+      if (brick === bomb || brick.lives <= 0) return;
+
+      const brickCenterX = brick.x + brick.width / 2;
+      const brickCenterY = brick.y + brick.height / 2;
+      const gridDistanceX = (brickCenterX - centerX) / cellWidth;
+      const gridDistanceY = (brickCenterY - centerY) / cellHeight;
+      if (Math.hypot(gridDistanceX, gridDistanceY) > 1.65) return;
+
+      if (brick.type === 'bomb') {
+        pendingBombs.push(brick);
+        return;
+      }
+
+      brick.lives -= 1;
+      if (brick.type === 'shielded') {
+        awardShieldedImpact(state, brick, setScore);
+      }
+      emitBrickBurst(state.particles, brickCenterX, brickCenterY, brick.color, 12, 6);
+      if (brick.lives <= 0) {
+        destroyBrickAndReward(state, brick, setScore, setGameCreditsEarned);
+      }
+    });
+  }
+};
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [splashVisible, setSplashVisible] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('menu');
+  const [campaignSectorIndex, setCampaignSectorIndex] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const backgroundMusicRef = useRef<HTMLAudioElement | null>(null);
@@ -703,6 +893,22 @@ export default function Home() {
   const [gameCreditsEarned, setGameCreditsEarned] = useState(0);
   const [showGameSummary, setShowGameSummary] = useState<'won' | 'lost' | null>(null);
   const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
+  const [highestLevelUnlocked, setHighestLevelUnlocked] = useState(() => {
+    if (typeof window === 'undefined') return 1;
+
+    try {
+      const saved = window.localStorage.getItem('neonshards_highestLevelUnlocked');
+      if (saved === null) return 1;
+
+      const parsed = Number(saved);
+      if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 16) return parsed;
+      console.warn('Ignoring invalid saved Neon Shards progression.');
+    } catch (error) {
+      console.warn('Unable to load saved Neon Shards progression.', error);
+    }
+
+    return 1;
+  });
   const [rewardAdReady, setRewardAdReady] = useState(false);
   const [rewardAdLoading, setRewardAdLoading] = useState(false);
   const [rewardAdError, setRewardAdError] = useState<string | null>(null);
@@ -752,16 +958,23 @@ export default function Home() {
   }, []);
 
   // LEVEL LIST DEFINITIONS
+  const levelDifficultyLabels = [
+    'EASY', 'MEDIUM', 'HARD', 'EXPERT',
+    'VETERAN', 'ELITE', 'MASTER', 'INSANE',
+    'NIGHTMARE', 'PHANTOM', 'ASTRAL', 'VOID',
+    'SENTINEL', 'APOCALYPSE', 'DEMONIC', 'OMEGA'
+  ];
+
   const levels: LevelDef[] = [
     {
-      name: "NEBULA GATE",
+      name: 'NEBULA GATE',
       brickRows: [
         { color: '#008cff', glowColor: 'rgba(0,140,255,0.7)', points: 500, lives: 1 },
         { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 500, lives: 1 }
       ]
     },
     {
-      name: "QUANTUM HORIZON",
+      name: 'QUANTUM HORIZON',
       brickRows: [
         { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 750, lives: 1 },
         { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 750, lives: 1 },
@@ -769,16 +982,16 @@ export default function Home() {
       ]
     },
     {
-      name: "OMEGA VOID",
+      name: 'OMEGA VOID',
       brickRows: [
-        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3000, lives: 2 }, // Double hit bricks
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3000, lives: 2 },
         { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2000, lives: 1 },
         { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1500, lives: 1 },
         { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1000, lives: 1 }
       ]
     },
     {
-      name: "EVENT HORIZON",
+      name: 'EVENT HORIZON',
       brickRows: [
         { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3500, lives: 2 },
         { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2500, lives: 2 },
@@ -788,7 +1001,7 @@ export default function Home() {
       ]
     },
     {
-      name: "ALIEN OUTPOST",
+      name: 'ALIEN OUTPOST',
       alienCount: 1,
       brickRows: [
         { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 3500, lives: 2 },
@@ -800,7 +1013,7 @@ export default function Home() {
       ]
     },
     {
-      name: "XENON SWARM",
+      name: 'XENON SWARM',
       alienCount: 2,
       brickRows: [
         { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 4000, lives: 2 },
@@ -813,7 +1026,7 @@ export default function Home() {
       ]
     },
     {
-      name: "STARFALL RAID",
+      name: 'STARFALL RAID',
       alienCount: 3,
       brickRows: [
         { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 4500, lives: 2 },
@@ -827,21 +1040,156 @@ export default function Home() {
       ]
     },
     {
-      name: "VOID INVASION",
+      name: 'VOID INVASION',
       alienCount: 4,
       brickRows: [
-        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 5000, lives: 2 },
-        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 4000, lives: 2 },
-        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 3200, lives: 2 },
-        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 2600, lives: 2 },
-        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2100, lives: 1 },
-        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1700, lives: 1 },
-        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1300, lives: 1 },
-        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1000, lives: 1 },
-        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 800, lives: 1 }
+        { color: '#e3fdff', glowColor: 'rgba(227,253,255,0.8)', points: 5000, lives: 2, pattern: 'sbshss' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 4000, lives: 2, pattern: 'ssbssh' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 3200, lives: 2, pattern: 'hsbssb' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 2600, lives: 2, pattern: 'ssbshs' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 2100, lives: 1, pattern: 'bsshss' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 1700, lives: 1, pattern: 'sshsbb' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 1300, lives: 1, pattern: 'sbssbh' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 1000, lives: 1, pattern: 'ssbssb' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 800, lives: 1, pattern: 'hsbsss' }
+      ]
+    },
+    {
+      name: 'SOLAR FLARE',
+      alienCount: 5,
+      brickRows: [
+        { color: '#ffe066', glowColor: 'rgba(255,224,102,0.8)', points: 6200, lives: 2, pattern: 'hhsshh' },
+        { color: '#ff9f43', glowColor: 'rgba(255,159,67,0.8)', points: 5400, lives: 2, pattern: 'shsbhs' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 4900, lives: 3, pattern: 'hssbhs' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 4600, lives: 3, pattern: 'sbhssh' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 4300, lives: 2, pattern: 'shhsbs' },
+        { color: '#ff9f43', glowColor: 'rgba(255,159,67,0.8)', points: 3900, lives: 2, pattern: 'hbsshs' }
+      ]
+    },
+    {
+      name: 'PULSAR ECHO',
+      alienCount: 5,
+      brickRows: [
+        { color: '#b9f2ff', glowColor: 'rgba(185,242,255,0.7)', points: 6800, lives: 2, pattern: 'gggggg' },
+        { color: '#7dd3fc', glowColor: 'rgba(125,211,252,0.7)', points: 6200, lives: 2, pattern: 'gsgsgs' },
+        { color: '#a78bfa', glowColor: 'rgba(167,139,250,0.7)', points: 5800, lives: 2, pattern: 'sggsgg' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 5600, lives: 2, pattern: 'ggsggg' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 5300, lives: 2, pattern: 'sgggsg' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 5100, lives: 2, pattern: 'ggsggs' }
+      ]
+    },
+    {
+      name: 'CYBER NEBULA',
+      alienCount: 6,
+      brickRows: [
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 7500, lives: 3, pattern: 'hbhbhs' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 7200, lives: 2, pattern: 'sbbsbb' },
+        { color: '#ffe066', glowColor: 'rgba(255,224,102,0.8)', points: 6900, lives: 3, pattern: 'bhsbhs' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 6600, lives: 2, pattern: 'shbshb' },
+        { color: '#ff9f43', glowColor: 'rgba(255,159,67,0.8)', points: 6300, lives: 3, pattern: 'bshbhs' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 6100, lives: 2, pattern: 'hssbhs' }
+      ]
+    },
+    {
+      name: 'HYPERNOVA CORE',
+      alienCount: 7,
+      brickRows: [
+        { color: '#ff8a3d', glowColor: 'rgba(255,138,61,0.8)', points: 8200, lives: 3, pattern: 'bbbsss' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 7800, lives: 3, pattern: 'sbbsbb' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 7600, lives: 3, pattern: 'hbbbss' },
+        { color: '#ffe066', glowColor: 'rgba(255,224,102,0.8)', points: 7400, lives: 2, pattern: 'bbsbhs' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 7100, lives: 2, pattern: 'sbhshb' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 6800, lives: 2, pattern: 'bssbhs' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 6500, lives: 2, pattern: 'sshbss' }
+      ]
+    },
+    {
+      name: 'DARK MATTER PROTOCOL',
+      alienCount: 7,
+      brickRows: [
+        { color: '#c084fc', glowColor: 'rgba(192,132,252,0.8)', points: 9000, lives: 3, pattern: 'gsgsgs' },
+        { color: '#7dd3fc', glowColor: 'rgba(125,211,252,0.7)', points: 8600, lives: 2, pattern: 'hsgshg' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 8200, lives: 3, pattern: 'sgghsg' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 7800, lives: 2, pattern: 'gshgsg' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 7500, lives: 3, pattern: 'hggshs' },
+        { color: '#ffe066', glowColor: 'rgba(255,224,102,0.8)', points: 7300, lives: 3, pattern: 'sggssg' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 7100, lives: 2, pattern: 'ghsgsg' }
+      ]
+    },
+    {
+      name: 'VORTEX CHAOS',
+      alienCount: 8,
+      brickRows: [
+        { color: '#ff8a3d', glowColor: 'rgba(255,138,61,0.8)', points: 9800, lives: 3, pattern: 'bbssbb' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 9400, lives: 3, pattern: 'bgbsbg' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 9100, lives: 3, pattern: 'sbbgbs' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 8900, lives: 3, pattern: 'gbsbgg' },
+        { color: '#ffe066', glowColor: 'rgba(255,224,102,0.8)', points: 8700, lives: 3, pattern: 'bggsgb' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 8500, lives: 2, pattern: 'gbsbgb' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 8300, lives: 2, pattern: 'bsggbb' }
+      ]
+    },
+    {
+      name: 'TITAN\'S REACH',
+      alienCount: 8,
+      brickRows: [
+        { color: '#ffd166', glowColor: 'rgba(255,209,102,0.8)', points: 10300, lives: 3, pattern: 'hhghhh' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 10000, lives: 3, pattern: 'ghhghg' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 9700, lives: 3, pattern: 'hggghg' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 9400, lives: 3, pattern: 'ghgghg' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 9100, lives: 3, pattern: 'hggghh' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 8900, lives: 2, pattern: 'ghghgg' },
+        { color: '#ffd166', glowColor: 'rgba(255,209,102,0.8)', points: 8700, lives: 2, pattern: 'hghghg' }
+      ]
+    },
+    {
+      name: 'ABYSSAL HORIZON',
+      alienCount: 9,
+      brickRows: [
+        { color: '#ff8a3d', glowColor: 'rgba(255,138,61,0.8)', points: 11800, lives: 3, pattern: 'bghbgb' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 11400, lives: 3, pattern: 'hgbsgh' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 11100, lives: 3, pattern: 'gbhbsg' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 10800, lives: 3, pattern: 'bghsgb' },
+        { color: '#ffd166', glowColor: 'rgba(255,209,102,0.8)', points: 10500, lives: 3, pattern: 'hgbhgb' },
+        { color: '#00f3ff', glowColor: 'rgba(0,243,255,0.7)', points: 10100, lives: 3, pattern: 'gbhsgb' },
+        { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 9800, lives: 3, pattern: 'bgsbgb' },
+        { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 9500, lives: 2, pattern: 'hgbbgh' }
       ]
     }
   ];
+
+  const isSectorUnlocked = (sectorIndex: number) =>
+    sectorIndex === 0 || highestLevelUnlocked >= sectorIndex * 4 + 1;
+
+  const unlockNextLevel = (clearedLevelIndex: number) => {
+    let savedHighestLevel = highestLevelUnlocked;
+    try {
+      const saved = window.localStorage.getItem('neonshards_highestLevelUnlocked');
+      if (saved !== null) {
+        const parsed = Number(saved);
+        if (Number.isInteger(parsed) && parsed >= 1 && parsed <= levels.length) {
+          savedHighestLevel = parsed;
+        } else {
+          console.warn('Ignoring invalid saved Neon Shards progression.');
+        }
+      }
+    } catch (error) {
+      console.warn('Unable to read saved Neon Shards progression.', error);
+    }
+
+    const nextHighestLevel = Math.min(
+      levels.length,
+      Math.max(savedHighestLevel, clearedLevelIndex + 2)
+    );
+    setHighestLevelUnlocked(previous => Math.max(previous, nextHighestLevel));
+    setCampaignSectorIndex(Math.min(3, Math.floor((nextHighestLevel - 1) / 4)));
+
+    try {
+      window.localStorage.setItem('neonshards_highestLevelUnlocked', String(nextHighestLevel));
+    } catch (error) {
+      console.error('Unable to save Neon Shards progression.', error);
+    }
+  };
 
   // GAME LOOP REFS
   const stateRef = useRef({
@@ -855,17 +1203,8 @@ export default function Home() {
     awaitingBallLaunch: false,
     powerups: [] as PowerUp[],
     particles: [] as Particle[],
-    bricks: [] as {
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      color: string;
-      glowColor: string;
-      points: number;
-      lives: number;
-      maxLives: number;
-    }[],
+    shockwaves: [] as Shockwave[],
+    bricks: [] as BrickState[],
     paddleTouchDirection: null as 'left' | 'right' | null,
     canvasWidth: 600,
     canvasHeight: 720,
@@ -996,6 +1335,11 @@ export default function Home() {
 
   // START LOCAL GAME LOOP
   const startGame = (levelIdx: number) => {
+    const sectorIndex = Math.floor(levelIdx / 4);
+    if (levelIdx < 0 || levelIdx >= levels.length || !isSectorUnlocked(sectorIndex)) {
+      return;
+    }
+
     backgroundMusicRef.current?.pause();
     sfx.activate();
     setActiveTab('play');
@@ -1022,19 +1366,13 @@ export default function Home() {
     const columns = 6;
     const actualWidthWithSpaceAdded = (stateRef.current.canvasWidth - (padding * (columns + 1))) / columns;
 
-    const bList: {
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      color: string;
-      glowColor: string;
-      points: number;
-      lives: number;
-      maxLives: number;
-    }[] = [];
+    const bList: BrickState[] = [];
     lvl.brickRows.forEach((row, rowIdx) => {
       for (let col = 0; col < columns; col++) {
+        const pattern = typeof row.pattern === 'string' && row.pattern.length > 0 ? row.pattern : null;
+        const selectedType = pattern ? normalizeBrickType(pattern[col % pattern.length]) : normalizeBrickType(row.type);
+        const brickLives = selectedType === 'shielded' ? Math.max(2, Math.min(3, row.lives)) : row.lives;
+
         bList.push({
           x: padding + col * (actualWidthWithSpaceAdded + padding),
           y: startY + rowIdx * (brickHeight + padding),
@@ -1043,8 +1381,13 @@ export default function Home() {
           color: row.color,
           glowColor: row.glowColor,
           points: row.points,
-          lives: row.lives,
-          maxLives: row.lives
+          lives: brickLives,
+          maxLives: brickLives,
+          type: selectedType,
+          baseX: padding + col * (actualWidthWithSpaceAdded + padding),
+          baseY: startY + rowIdx * (brickHeight + padding),
+          phase: rowIdx * 0.9 + col * 0.65,
+          direction: col % 2 === 0 ? 1 : -1
         });
       }
     });
@@ -1057,6 +1400,7 @@ export default function Home() {
     stateRef.current.pendingAlienRespawns = [];
     stateRef.current.powerups = [];
     stateRef.current.particles = [];
+    stateRef.current.shockwaves = [];
     stateRef.current.paddleX = 300;
 
     // Apply equipment multiplier to paddle width
@@ -1227,6 +1571,24 @@ export default function Home() {
         ctx.shadowBlur = 8;
         ctx.shadowColor = p.color;
         ctx.fillRect(p.x, p.y, p.size, p.size);
+        ctx.restore();
+        return true;
+      });
+
+      state.shockwaves = state.shockwaves.filter(wave => {
+        wave.radius += 4.5;
+        wave.alpha -= 0.028;
+        if (wave.alpha <= 0 || wave.radius >= wave.maxRadius) return false;
+
+        ctx.save();
+        ctx.globalAlpha = wave.alpha;
+        ctx.strokeStyle = wave.color;
+        ctx.lineWidth = Math.max(1, 5 * wave.alpha);
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = wave.color;
+        ctx.beginPath();
+        ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
+        ctx.stroke();
         ctx.restore();
         return true;
       });
@@ -1425,8 +1787,17 @@ export default function Home() {
         }
 
         // BRICKS COLLISION CHECK
+        state.bricks.forEach(brick => {
+          if (brick.type === 'glider') {
+            const drift = Math.sin((performance.now() * 0.004) + brick.phase) * 22;
+            brick.x = brick.baseX + drift;
+            brick.y = brick.baseY + Math.sin((performance.now() * 0.004) + brick.phase * 0.5) * 6;
+          }
+        });
+
         state.bricks = state.bricks.filter(brick => {
-          // AABB bounding box collision index
+          if (brick.lives <= 0) return false;
+
           const closestX = Math.max(brick.x, Math.min(ball.x, brick.x + brick.width));
           const closestY = Math.max(brick.y, Math.min(ball.y, brick.y + brick.height));
           const distanceX = ball.x - closestX;
@@ -1434,7 +1805,6 @@ export default function Home() {
           const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
 
           if (distanceSquared < ball.radius * ball.radius) {
-            // Bounce axis logic
             const fromLeft = ball.x + ball.vx < brick.x;
             const fromRight = ball.x + ball.vx > brick.x + brick.width;
             const fromTop = ball.y + ball.vy < brick.y;
@@ -1448,46 +1818,30 @@ export default function Home() {
               ball.vy = -ball.vy;
             }
 
-            // Deduct brick health
+            if (brick.type === 'bomb') {
+              triggerBombExplosion(state, brick, setScore, setGameCreditsEarned);
+              return false;
+            }
+
             brick.lives--;
             sfx.playBrickHit(brick.lives > 0);
+            if (brick.type === 'shielded') {
+              awardShieldedImpact(state, brick, setScore);
+            }
+            emitBrickBurst(state.particles, ball.x, ball.y, brick.color, 14, 6);
 
-            // Create blast sparks particles
-            for (let k = 0; k < 12; k++) {
-              state.particles.push({
-                x: ball.x,
-                y: ball.y,
-                vx: (Math.random() - 0.5) * 6,
-                vy: (Math.random() - 0.5) * 6,
-                color: brick.color,
-                alpha: 1.0,
-                size: Math.random() * 4 + 2
-              });
+            if (brick.type === 'shielded' && brick.lives > 0) {
+              return true;
             }
 
             if (brick.lives <= 0) {
-              state.score += brick.points;
-              setScore(state.score);
-              state.gameCreditsEarned += Math.ceil(brick.points / 100);
-              setGameCreditsEarned(state.gameCreditsEarned);
-
-              // Powerup drop chance
-              if (Math.random() < 0.22) {
-                const types: ('multiball'|'wide'|'slow'|'credits')[] = ['multiball', 'wide', 'slow', 'credits'];
-                const selectType = types[Math.floor(Math.random() * types.length)];
-                state.powerups.push({
-                  x: brick.x + brick.width / 2,
-                  y: brick.y + brick.height,
-                  type: selectType,
-                  radius: 12
-                });
-              }
-              return false; // delete brick
-            } else {
-              // Dim points color visually
-              return true;
+              destroyBrickAndReward(state, brick, setScore, setGameCreditsEarned);
+              return false;
             }
+
+            return true;
           }
+
           return true;
         });
 
@@ -1577,6 +1931,7 @@ export default function Home() {
 
       // Handle level clear victory state
       if (state.bricks.length === 0) {
+        unlockNextLevel(state.levelIndex);
         setIsPlaying(false);
         setShowGameSummary('won');
         sfx.playLevelComplete();
@@ -1627,23 +1982,98 @@ export default function Home() {
       // RENDER BRICKS
       state.bricks.forEach(brick => {
         ctx.save();
-        ctx.fillStyle = brick.color;
-        ctx.strokeStyle = '#131315';
-        ctx.lineWidth = 1;
-        ctx.shadowBlur = brick.lives > 1 ? 12 : 6;
-        ctx.shadowColor = brick.color;
+        const isShielded = brick.type === 'shielded';
+        const isBomb = brick.type === 'bomb';
+        const isGlider = brick.type === 'glider';
 
-        // Fade partially broken bricks
-        if (brick.lives < brick.maxLives) {
-          ctx.globalAlpha = 0.5;
+        if (state.levelIndex >= 7) {
+          const rowIndex = Math.round((brick.baseY - 120) / 30);
+          const palette = SPECIAL_LEVEL_PALETTES[state.levelIndex - 7] ?? SPECIAL_LEVEL_PALETTES[0];
+          const damageStage = brick.maxLives - brick.lives;
+          const color = isBomb
+            ? '#ffe52e'
+            : isShielded
+              ? palette[(rowIndex + damageStage) % palette.length]
+              : isGlider
+                ? palette[(rowIndex + 2) % palette.length]
+                : palette[rowIndex % palette.length];
+
+          ctx.fillStyle = color;
+          ctx.strokeStyle = '#11122a';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 14;
+          ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+          ctx.strokeRect(brick.x + 1, brick.y + 1, brick.width - 2, brick.height - 2);
+        } else {
+          ctx.shadowBlur = brick.lives > 1 ? 12 : 6;
+          ctx.shadowColor = isBomb ? '#ffe45c' : brick.glowColor || brick.color;
+
+          if (brick.lives < brick.maxLives && !isShielded) {
+            ctx.globalAlpha = 0.52;
+          }
+
+          if (isBomb) {
+            const inset = 2;
+            ctx.fillStyle = '#ffd91a';
+            ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+            ctx.fillStyle = '#ffed62';
+            ctx.fillRect(brick.x + inset, brick.y + inset, brick.width - inset * 2, Math.max(3, brick.height * 0.35));
+            ctx.fillStyle = '#e8a900';
+            ctx.fillRect(brick.x + inset, brick.y + brick.height * 0.72, brick.width - inset * 2, brick.height * 0.2);
+            ctx.strokeStyle = '#11122a';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(brick.x + 1, brick.y + 1, brick.width - 2, brick.height - 2);
+          } else {
+            const shieldColor = brick.lives === 2 ? '#ffb52e' : '#ff526e';
+            ctx.fillStyle = isShielded && brick.lives < brick.maxLives ? shieldColor : brick.color;
+            ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+          }
+
+          ctx.strokeStyle = '#131315';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(brick.x, brick.y, brick.width, brick.height);
+
+          if (isShielded) {
+            ctx.strokeStyle = brick.lives < brick.maxLives ? '#fff1c1' : 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(brick.x + 4, brick.y + brick.height * 0.25);
+            ctx.lineTo(brick.x + brick.width - 4, brick.y + brick.height * 0.25);
+            ctx.moveTo(brick.x + 3, brick.y + brick.height * 0.7);
+            ctx.lineTo(brick.x + brick.width - 3, brick.y + brick.height * 0.7);
+            ctx.stroke();
+
+            if (brick.lives < brick.maxLives) {
+              ctx.strokeStyle = '#23182a';
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(brick.x + brick.width * 0.52, brick.y + 2);
+              ctx.lineTo(brick.x + brick.width * 0.44, brick.y + brick.height * 0.42);
+              if (brick.lives === 1) {
+                ctx.lineTo(brick.x + brick.width * 0.57, brick.y + brick.height * 0.58);
+                ctx.lineTo(brick.x + brick.width * 0.48, brick.y + brick.height - 2);
+              } else {
+                ctx.lineTo(brick.x + brick.width * 0.58, brick.y + brick.height - 2);
+              }
+              ctx.stroke();
+            }
+          }
+
+          if (isGlider) {
+            ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(brick.x + 3, brick.y + 3);
+            ctx.lineTo(brick.x + brick.width - 4, brick.y + brick.height - 3);
+            ctx.moveTo(brick.x + brick.width - 4, brick.y + 3);
+            ctx.lineTo(brick.x + 3, brick.y + brick.height - 3);
+            ctx.stroke();
+          }
+
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+          ctx.fillRect(brick.x + 2, brick.y + 2, brick.width - 4, 3);
         }
-
-        ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
-        ctx.strokeRect(brick.x, brick.y, brick.width, brick.height);
-
-        // Highlight inner reflection glow
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-        ctx.fillRect(brick.x + 2, brick.y + 2, brick.width - 4, 3);
 
         ctx.restore();
       });
@@ -2044,32 +2474,65 @@ export default function Home() {
                 </button>
 
                 {/* CAMPAIGN LEVEL SELECTOR */}
-                <div className="grid grid-cols-2 gap-3">
-                  {levels.slice(0, 4).map((level, index) => {
-                    const difficultyLabel = ['EASY', 'MEDIUM', 'HARD', 'EXPERT'][index];
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-2">
+                    {Array.from({ length: 4 }, (_, sectorIndex) => (
+                      (() => {
+                        const unlocked = isSectorUnlocked(sectorIndex);
+                        return (
+                          <button
+                            key={`sector-${sectorIndex}`}
+                            type="button"
+                            disabled={!unlocked}
+                            aria-label={`Sector ${sectorIndex + 1}${unlocked ? '' : ', locked'}`}
+                            aria-pressed={campaignSectorIndex === sectorIndex}
+                            onClick={() => setCampaignSectorIndex(sectorIndex)}
+                            className={`flex flex-1 items-center justify-center gap-1 rounded-lg border px-2 py-1.5 text-[9px] font-mono font-bold uppercase tracking-[0.12em] transition-all ${!unlocked ? 'cursor-not-allowed border-[#303337] bg-[#171819] text-[#5b6065] opacity-45' : campaignSectorIndex === sectorIndex ? 'border-[#00f3ff] bg-[#00f3ff]/10 text-[#00f3ff]' : 'border-[#3a494b] text-[#849495] hover:border-[#ff24e4] hover:text-white'}`}
+                          >
+                            <span>Sector {sectorIndex + 1}</span>
+                            {!unlocked && <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />}
+                          </button>
+                        );
+                      })()
+                    ))}
+                  </div>
 
-                    return (
-                      <button
-                        key={level.name}
-                        onClick={() => startGame(index)}
-                        className="bg-[#1c1b1d]/80 backdrop-blur-md p-4 rounded-xl flex flex-col items-start gap-2 border border-[#3a494b] hover:border-[#ff24e4] hover:bg-white/5 active:scale-95 transition-all"
-                      >
-                        {index === 0 ? (
-                          <Compass className="w-6 h-6 text-[#008cff]" />
-                        ) : index === 1 ? (
-                          <Sparkles className="w-6 h-6 text-[#00dce6]" />
-                        ) : index === 2 ? (
-                          <Zap className="w-6 h-6 text-[#ff24e4]" />
-                        ) : (
-                          <Target className="w-6 h-6 text-[#fface8]" />
-                        )}
-                        <span className="font-sora text-sm font-bold text-white text-left">{level.name}</span>
-                        <span className="font-mono text-[9px] text-[#849495]">
-                          LEVEL {(index + 1).toString().padStart(2, '0')} • {difficultyLabel}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  {isSectorUnlocked(campaignSectorIndex) ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      {levels.slice(campaignSectorIndex * 4, (campaignSectorIndex + 1) * 4).map((level, localIndex) => {
+                        const globalIndex = campaignSectorIndex * 4 + localIndex;
+                        const difficultyLabel = levelDifficultyLabels[globalIndex];
+
+                        return (
+                          <button
+                            key={level.name}
+                            onClick={() => startGame(globalIndex)}
+                            className="bg-[#1c1b1d]/80 backdrop-blur-md p-4 rounded-xl flex flex-col items-start gap-2 border border-[#3a494b] hover:border-[#ff24e4] hover:bg-white/5 active:scale-95 transition-all"
+                          >
+                            {localIndex === 0 ? (
+                              <Compass className="w-6 h-6 text-[#008cff]" />
+                            ) : localIndex === 1 ? (
+                              <Sparkles className="w-6 h-6 text-[#00dce6]" />
+                            ) : localIndex === 2 ? (
+                              <Zap className="w-6 h-6 text-[#ff24e4]" />
+                            ) : (
+                              <Target className="w-6 h-6 text-[#fface8]" />
+                            )}
+                            <span className="font-sora text-sm font-bold text-white text-left">{level.name}</span>
+                            <span className="font-mono text-[9px] text-[#849495]">
+                              LEVEL {(globalIndex + 1).toString().padStart(2, '0')} • {difficultyLabel}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-xl border border-[#303337] bg-[#171819] p-4 text-center">
+                      <Lock className="h-5 w-5 text-[#5b6065]" aria-hidden="true" />
+                      <span className="font-mono text-[10px] font-bold tracking-widest text-[#6d7277]">SECTOR LOCKED</span>
+                      <span className="font-mono text-[9px] text-[#555a5f]">Complete the previous sector to unlock.</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* TUTORIAL INFO CARDS */}
@@ -2895,6 +3358,8 @@ export default function Home() {
                   if (confirm("WARNING: Are you absolutely sure about erasing credentials storage? All credits and ships purchased will return to initial presets!")) {
                     localStorage.clear();
                     setCredits(12450);
+                    setHighestLevelUnlocked(1);
+                    setCampaignSectorIndex(0);
                     setPaddles([
                       {
                         id: 'classic',
