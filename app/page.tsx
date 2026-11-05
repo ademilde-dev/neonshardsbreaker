@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { AdMob, RewardAdOptions, RewardAdPluginEvents } from '@capacitor-community/admob';
 import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import alienSprite from '../assets/alien.png';
+import alienBossSprite from '../assets/alien-boss.png';
 import iconArtwork from '../assets/icon.jpg';
 import { 
   Play, 
@@ -361,6 +362,27 @@ interface Alien {
   revealTick: number;
 }
 
+interface BossState {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  vx: number;
+  hp: number;
+  maxHp: number;
+  flashUntil: number;
+  nextAttackAt: number;
+  defeatedAt: number | null;
+  victoryHandled: boolean;
+}
+
+interface BossProjectile {
+  x: number;
+  y: number;
+  size: number;
+  vy: number;
+}
+
 const ALIEN_REVEAL_COLUMNS = 10;
 const ALIEN_REVEAL_ROWS = 7;
 const ALIEN_REVEAL_CELLS = Array.from(
@@ -379,6 +401,8 @@ const ALIEN_REVEAL_CELLS = Array.from(
 const ALIEN_REVEAL_STEPS = ALIEN_REVEAL_CELLS.length;
 const BALL_LAUNCH_VX = 2.4;
 const BALL_LAUNCH_VY = -4.2;
+const BOSS_LEVEL_INDEX = 16;
+const BOSS_MAX_HP = 28;
 const SPECIAL_LEVEL_PALETTES: readonly (readonly string[])[] = [
   ['#00eaff', '#ff24e4', '#a6ff00', '#ff7a00'],
   ['#ff4d00', '#ffd400', '#ff2d55', '#ff8a00'],
@@ -901,7 +925,7 @@ export default function Home() {
       if (saved === null) return 1;
 
       const parsed = Number(saved);
-      if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 16) return parsed;
+      if (Number.isInteger(parsed) && parsed >= 1 && parsed <= BOSS_LEVEL_INDEX + 1) return parsed;
       console.warn('Ignoring invalid saved Neon Shards progression.');
     } catch (error) {
       console.warn('Unable to load saved Neon Shards progression.', error);
@@ -938,6 +962,7 @@ export default function Home() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const alienImageRef = useRef<HTMLImageElement | null>(null);
+  const alienBossImageRef = useRef<HTMLImageElement | null>(null);
   // Ref síncrona para vidas — usada no loop do jogo para disparar sons
   // sem depender do ciclo de atualização do React state
   const livesRef = useRef(startingLives);
@@ -957,12 +982,27 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    const image = new Image();
+    image.onload = () => {
+      alienBossImageRef.current = image;
+    };
+    image.onerror = () => {
+      console.error('Não foi possível carregar o sprite do chefe:', alienBossSprite.src);
+    };
+    image.src = alienBossSprite.src;
+
+    return () => {
+      alienBossImageRef.current = null;
+    };
+  }, []);
+
   // LEVEL LIST DEFINITIONS
   const levelDifficultyLabels = [
     'EASY', 'MEDIUM', 'HARD', 'EXPERT',
     'VETERAN', 'ELITE', 'MASTER', 'INSANE',
     'NIGHTMARE', 'PHANTOM', 'ASTRAL', 'VOID',
-    'SENTINEL', 'APOCALYPSE', 'DEMONIC', 'OMEGA'
+    'SENTINEL', 'APOCALYPSE', 'DEMONIC', 'OMEGA', 'FINAL BOSS'
   ];
 
   const levels: LevelDef[] = [
@@ -1155,6 +1195,10 @@ export default function Home() {
         { color: '#ff24e4', glowColor: 'rgba(255,36,228,0.7)', points: 9800, lives: 3, pattern: 'bgsbgb' },
         { color: '#36fd0f', glowColor: 'rgba(54,253,15,0.7)', points: 9500, lives: 2, pattern: 'hgbbgh' }
       ]
+    },
+    {
+      name: 'ALIEN OUTPOST (FINAL BOSS)',
+      brickRows: []
     }
   ];
 
@@ -1177,10 +1221,7 @@ export default function Home() {
       console.warn('Unable to read saved Neon Shards progression.', error);
     }
 
-    const nextHighestLevel = Math.min(
-      levels.length,
-      Math.max(savedHighestLevel, clearedLevelIndex + 2)
-    );
+    const nextHighestLevel = Math.min(levels.length, Math.max(savedHighestLevel, clearedLevelIndex + 2));
     setHighestLevelUnlocked(previous => Math.max(previous, nextHighestLevel));
     setCampaignSectorIndex(Math.min(3, Math.floor((nextHighestLevel - 1) / 4)));
 
@@ -1199,6 +1240,8 @@ export default function Home() {
     widePaddleFramesRemaining: 0,
     balls: [] as Ball[],
     aliens: [] as Alien[],
+    boss: null as BossState | null,
+    bossProjectiles: [] as BossProjectile[],
     pendingAlienRespawns: [] as number[],
     awaitingBallLaunch: false,
     powerups: [] as PowerUp[],
@@ -1397,6 +1440,22 @@ export default function Home() {
       { length: lvl.alienCount ?? 0 },
       (_, index) => createAlien(index, lvl.alienCount ?? 0)
     );
+    stateRef.current.boss = levelIdx === BOSS_LEVEL_INDEX
+      ? {
+          x: stateRef.current.canvasWidth / 2,
+          y: 145,
+          width: 210,
+          height: 210 * (alienBossSprite.height / alienBossSprite.width),
+          vx: 2.2,
+          hp: BOSS_MAX_HP,
+          maxHp: BOSS_MAX_HP,
+          flashUntil: 0,
+          nextAttackAt: performance.now() + 1200,
+          defeatedAt: null,
+          victoryHandled: false
+        }
+      : null;
+    stateRef.current.bossProjectiles = [];
     stateRef.current.pendingAlienRespawns = [];
     stateRef.current.powerups = [];
     stateRef.current.particles = [];
@@ -1525,6 +1584,7 @@ export default function Home() {
       }
 
       const state = stateRef.current;
+      const now = performance.now();
 
       // CLEAR CANVAS WITH FADING MATRIX PATTERN
       ctx.fillStyle = 'rgba(5, 5, 5, 0.25)'; // slight motion trail
@@ -1538,6 +1598,61 @@ export default function Home() {
           ctx.arc(gx, gy, 1, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+
+      if (state.boss && state.boss.hp === 0) {
+        state.particles = state.particles.filter(particle => {
+          particle.x += particle.vx;
+          particle.y += particle.vy;
+          particle.alpha -= 0.02;
+          if (particle.alpha <= 0) return false;
+
+          ctx.save();
+          ctx.globalAlpha = particle.alpha;
+          ctx.fillStyle = particle.color;
+          ctx.shadowBlur = 8;
+          ctx.shadowColor = particle.color;
+          ctx.fillRect(particle.x, particle.y, particle.size, particle.size);
+          ctx.restore();
+          return true;
+        });
+
+        state.shockwaves = state.shockwaves.filter(wave => {
+          wave.radius += 4.5;
+          wave.alpha -= 0.028;
+          if (wave.alpha <= 0 || wave.radius >= wave.maxRadius) return false;
+
+          ctx.save();
+          ctx.globalAlpha = wave.alpha;
+          ctx.strokeStyle = wave.color;
+          ctx.lineWidth = Math.max(1, 5 * wave.alpha);
+          ctx.shadowBlur = 18;
+          ctx.shadowColor = wave.color;
+          ctx.beginPath();
+          ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+          return true;
+        });
+
+        const boss = state.boss;
+        if (
+          boss.defeatedAt !== null
+          && !boss.victoryHandled
+          && livesRef.current > 0
+          && now - boss.defeatedAt >= 750
+        ) {
+          boss.victoryHandled = true;
+          unlockNextLevel(BOSS_LEVEL_INDEX);
+          setIsPlaying(false);
+          setShowGameSummary('won');
+          sfx.playLevelComplete();
+          updateCredits(state.gameCreditsEarned + 2000);
+          savePlayerHighScore(state.score + 2000);
+        }
+
+        animFrame = requestAnimationFrame(gameUpdateAndRender);
+        return;
       }
 
       // PHYSICS UPDATE: PADDLE
@@ -1705,7 +1820,6 @@ export default function Home() {
         });
       }
 
-      const now = performance.now();
       state.pendingAlienRespawns = state.pendingAlienRespawns.filter(respawnAt => {
         if (now < respawnAt) return true;
         state.aliens.push(createAlien(
@@ -1713,6 +1827,80 @@ export default function Home() {
           levels[state.levelIndex].alienCount ?? 1
         ));
         return false;
+      });
+
+      const activeBoss = state.boss;
+      const isBossLevel = state.levelIndex === BOSS_LEVEL_INDEX;
+      let lostLifeFromBossAttack = false;
+      let bossProjectileGameOver = false;
+
+      if (isBossLevel && activeBoss && activeBoss.hp > 0 && !bossProjectileGameOver) {
+        const horizontalLimit = state.canvasWidth / 2 - activeBoss.width / 2 - 12;
+        activeBoss.x += activeBoss.vx;
+        if (activeBoss.x >= state.canvasWidth / 2 + horizontalLimit) {
+          activeBoss.x = state.canvasWidth / 2 + horizontalLimit;
+          activeBoss.vx = -Math.abs(activeBoss.vx);
+        } else if (activeBoss.x <= state.canvasWidth / 2 - horizontalLimit) {
+          activeBoss.x = state.canvasWidth / 2 - horizontalLimit;
+          activeBoss.vx = Math.abs(activeBoss.vx);
+        }
+
+        if (now >= activeBoss.nextAttackAt && state.bossProjectiles.length < 2) {
+          state.bossProjectiles.push({
+            x: activeBoss.x + (Math.random() - 0.5) * activeBoss.width * 0.55,
+            y: activeBoss.y + activeBoss.height / 2,
+            size: 15,
+            vy: 3.2
+          });
+          activeBoss.nextAttackAt = now + 3200;
+        }
+      }
+
+      state.bossProjectiles = state.bossProjectiles.filter(projectile => {
+        projectile.y += projectile.vy;
+
+        const projectileTop = projectile.y - projectile.size / 2;
+        const projectileBottom = projectile.y + projectile.size / 2;
+        const paddleTop = 660;
+        const hitPaddle = projectileBottom >= paddleTop
+          && projectileTop <= paddleTop + 12
+          && projectile.x + projectile.size / 2 >= state.paddleX - state.paddleWidth / 2
+          && projectile.x - projectile.size / 2 <= state.paddleX + state.paddleWidth / 2;
+
+        if (hitPaddle) {
+          if (!lostLifeFromBossAttack) {
+            const nextLives = Math.max(0, livesRef.current - 1);
+            livesRef.current = nextLives;
+            setLives(nextLives);
+            lostLifeFromBossAttack = true;
+            sfx.playBallLost();
+
+            if (nextLives === 0) {
+              bossProjectileGameOver = true;
+              setIsPlaying(false);
+              setShowGameSummary('lost');
+              sfx.playGameOver();
+              updateCredits(state.gameCreditsEarned);
+              savePlayerHighScore(state.score);
+            }
+          }
+          return false;
+        }
+
+        if (projectileTop > state.canvasHeight) return false;
+
+        ctx.save();
+        ctx.translate(projectile.x, projectile.y);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = '#ff4d8d';
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = '#ff24e4';
+        ctx.fillRect(-projectile.size / 2, -projectile.size / 2, projectile.size, projectile.size);
+        ctx.fillStyle = '#ffffff';
+        ctx.globalAlpha = 0.8;
+        ctx.fillRect(-2, -projectile.size / 2 + 2, 4, projectile.size - 4);
+        ctx.restore();
+        return true;
       });
 
       // PHYSICS UPDATE: BALLS
@@ -1784,6 +1972,52 @@ export default function Home() {
           ball.y = ball.radius;
           ball.vy = -ball.vy;
           sfx.playPaddleHit();
+        }
+
+        if (isBossLevel && activeBoss && activeBoss.hp > 0) {
+          const dx = ball.x - activeBoss.x;
+          const dy = ball.y - activeBoss.y;
+          const horizontalReach = activeBoss.width / 2 + ball.radius;
+          const verticalReach = activeBoss.height / 2 + ball.radius;
+          const ellipseDistance = Math.hypot(dx / horizontalReach, dy / verticalReach);
+
+          if (ellipseDistance <= 1) {
+            const gradientX = dx / (horizontalReach * horizontalReach);
+            const gradientY = dy / (verticalReach * verticalReach);
+            const normalLength = Math.hypot(gradientX, gradientY) || 1;
+            const normalX = gradientX / normalLength;
+            const normalY = gradientY / normalLength;
+            const relativeVx = ball.vx - activeBoss.vx;
+            const velocityAlongNormal = relativeVx * normalX + ball.vy * normalY;
+
+            const safeEllipseDistance = Math.max(ellipseDistance, 0.001);
+            ball.x = activeBoss.x + dx / safeEllipseDistance;
+            ball.y = activeBoss.y + dy / safeEllipseDistance;
+
+            if (velocityAlongNormal < 0) {
+              const reflectedVx = relativeVx - 2 * velocityAlongNormal * normalX;
+              ball.vx = reflectedVx + activeBoss.vx;
+              ball.vy -= 2 * velocityAlongNormal * normalY;
+              activeBoss.hp = Math.max(0, activeBoss.hp - 1);
+              activeBoss.flashUntil = now + 130;
+              state.score += 500;
+              setScore(state.score);
+              emitBrickBurst(state.particles, ball.x, ball.y, '#00f3ff', 18, 8);
+              emitBrickBurst(state.particles, ball.x, ball.y, '#ff24e4', 10, 5);
+              sfx.playBrickHit();
+
+              if (activeBoss.hp === 0) {
+                activeBoss.defeatedAt = now;
+                state.bossProjectiles = [];
+                emitBrickBurst(state.particles, activeBoss.x, activeBoss.y, '#ffffff', 100, 18);
+                emitBrickBurst(state.particles, activeBoss.x, activeBoss.y, '#00f3ff', 70, 14);
+                state.shockwaves.push(
+                  { x: activeBoss.x, y: activeBoss.y, radius: 8, maxRadius: 190, color: '#00f3ff', alpha: 1 },
+                  { x: activeBoss.x, y: activeBoss.y, radius: 4, maxRadius: 145, color: '#ff24e4', alpha: 0.9 }
+                );
+              }
+            }
+          }
         }
 
         // BRICKS COLLISION CHECK
@@ -1901,7 +2135,18 @@ export default function Home() {
       state.balls = nextBallsList;
 
       // Handle no balls remaining
-      if (state.balls.length === 0) {
+      if (state.balls.length === 0 && lostLifeFromBossAttack) {
+        if (livesRef.current > 0) {
+          state.balls.push({
+            x: state.paddleX,
+            y: 652,
+            vx: 0,
+            vy: 0,
+            radius: 8
+          });
+          state.awaitingBallLaunch = true;
+        }
+      } else if (state.balls.length === 0 && !bossProjectileGameOver) {
         const nextLives = Math.max(0, livesRef.current - 1);
         livesRef.current = nextLives;
         setLives(nextLives);
@@ -1930,7 +2175,7 @@ export default function Home() {
       }
 
       // Handle level clear victory state
-      if (state.bricks.length === 0) {
+      if (!isBossLevel && state.bricks.length === 0) {
         unlockNextLevel(state.levelIndex);
         setIsPlaying(false);
         setShowGameSummary('won');
@@ -2081,6 +2326,52 @@ export default function Home() {
       state.aliens.forEach(alien => {
         drawAlienSprite(ctx, alien, alienImageRef.current);
       });
+      if (isBossLevel && activeBoss && activeBoss.hp > 0) {
+        const bossImage = alienBossImageRef.current;
+        const bossLeft = activeBoss.x - activeBoss.width / 2;
+        const bossTop = activeBoss.y - activeBoss.height / 2;
+        const isFlashing = now < activeBoss.flashUntil;
+
+        ctx.save();
+        ctx.shadowBlur = 22;
+        ctx.shadowColor = isFlashing ? '#ff526e' : '#00f3ff';
+        if (bossImage?.complete && bossImage.naturalWidth > 0) {
+          ctx.globalAlpha = isFlashing ? 0.9 : 1;
+          ctx.globalCompositeOperation = 'screen';
+          ctx.filter = isFlashing
+            ? 'brightness(1.8) sepia(1) saturate(5) hue-rotate(300deg)'
+            : 'none';
+          ctx.drawImage(bossImage, bossLeft, bossTop, activeBoss.width, activeBoss.height);
+        } else {
+          ctx.fillStyle = isFlashing ? '#ffffff' : '#09233a';
+          ctx.strokeStyle = isFlashing ? '#ff526e' : '#00f3ff';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.ellipse(activeBoss.x, activeBoss.y, activeBoss.width / 2, activeBoss.height / 2, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        const healthBarWidth = 240;
+        const healthBarX = (state.canvasWidth - healthBarWidth) / 2;
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 12px Space Mono';
+        ctx.fillStyle = '#fface8';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#ff24e4';
+        ctx.fillText('ALIEN OUTPOST', state.canvasWidth / 2, 24);
+        ctx.fillStyle = 'rgba(19, 19, 21, 0.9)';
+        ctx.fillRect(healthBarX, 32, healthBarWidth, 8);
+        ctx.fillStyle = '#ff24e4';
+        ctx.shadowColor = '#00f3ff';
+        ctx.fillRect(healthBarX, 32, healthBarWidth * (activeBoss.hp / activeBoss.maxHp), 8);
+        ctx.strokeStyle = '#b9ffff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(healthBarX, 32, healthBarWidth, 8);
+        ctx.restore();
+      }
 
       // RENDER BALLS
       state.balls.forEach(ball => {
@@ -2498,7 +2789,8 @@ export default function Home() {
                   </div>
 
                   {isSectorUnlocked(campaignSectorIndex) ? (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-3">
+                      <div className="grid grid-cols-2 gap-3">
                       {levels.slice(campaignSectorIndex * 4, (campaignSectorIndex + 1) * 4).map((level, localIndex) => {
                         const globalIndex = campaignSectorIndex * 4 + localIndex;
                         const difficultyLabel = levelDifficultyLabels[globalIndex];
@@ -2525,6 +2817,25 @@ export default function Home() {
                           </button>
                         );
                       })}
+                      </div>
+                      {campaignSectorIndex === 3 && (
+                        <button
+                          type="button"
+                          disabled={highestLevelUnlocked < BOSS_LEVEL_INDEX + 1}
+                          aria-label={`Level 17, Alien Outpost Final Boss${highestLevelUnlocked < BOSS_LEVEL_INDEX + 1 ? ', locked' : ''}`}
+                          onClick={() => startGame(BOSS_LEVEL_INDEX)}
+                          className="flex w-full items-center gap-3 rounded-xl border border-[#ff24e4]/50 bg-[#1c1b1d]/85 p-4 text-left transition-all hover:border-[#ff24e4] hover:shadow-[0_0_18px_rgba(255,36,228,0.2)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          <Zap className="h-6 w-6 shrink-0 text-[#ff24e4]" aria-hidden="true" />
+                          <span className="flex flex-1 flex-col gap-1">
+                            <span className="font-sora text-sm font-bold text-white">ALIEN OUTPOST (FINAL BOSS)</span>
+                            <span className="font-mono text-[9px] text-[#fface8]">
+                              LEVEL 17 • {highestLevelUnlocked < BOSS_LEVEL_INDEX + 1 ? 'COMPLETE LEVEL 16 TO UNLOCK' : 'FINAL BOSS • REPLAY'}
+                            </span>
+                          </span>
+                          {highestLevelUnlocked < BOSS_LEVEL_INDEX + 1 && <Lock className="h-4 w-4 text-[#849495]" aria-hidden="true" />}
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-xl border border-[#303337] bg-[#171819] p-4 text-center">
@@ -2735,8 +3046,12 @@ export default function Home() {
                         )}
                       </div>
 
-                      <h3 className="font-sora text-2xl font-extrabold tracking-wide text-white mb-1">
-                        {showGameSummary === 'won' ? 'MISSION SUCCESS' : 'SYSTEM OFFLINE'}
+                      <h3 className="mb-1 font-sora text-lg font-extrabold tracking-wide text-white sm:text-xl">
+                        {showGameSummary === 'won'
+                          ? currentLevelIndex === BOSS_LEVEL_INDEX
+                            ? 'VICTORY: ALIEN OUTPOST DESTROYED - SECTORS SECURED'
+                            : 'MISSION SUCCESS'
+                          : 'SYSTEM OFFLINE'}
                       </h3>
                       <p className="font-mono text-[9px] text-[#849495] tracking-widest uppercase mb-4">
                         NEONSHARKS TERMINAL REPORT
