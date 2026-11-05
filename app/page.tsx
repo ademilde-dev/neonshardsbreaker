@@ -23,6 +23,7 @@ import {
   Volume2, 
   VolumeX, 
   ArrowLeft,
+  Music,
   Tv, 
   ShoppingBag,
   Sparkles,
@@ -248,7 +249,7 @@ class SoundFX {
 const sfx = new SoundFX();
 
 // CORE APP TYPES
-type TabType = 'menu' | 'play' | 'store' | 'leaderboard' | 'credits';
+type TabType = 'menu' | 'play' | 'store' | 'leaderboard' | 'credits' | 'bonus_credits';
 
 interface Pilot {
   id: string;
@@ -403,6 +404,64 @@ const BALL_LAUNCH_VX = 2.4;
 const BALL_LAUNCH_VY = -4.2;
 const BOSS_LEVEL_INDEX = 16;
 const BOSS_MAX_HP = 28;
+const BONUS_CREDIT_LYRICS = [
+  {
+    heading: '[Verse 1]',
+    lines: [
+      'Códigos dançam na chuva de neon,',
+      'Neon Shards Breaker,',
+      'Nascido pra vencer,',
+      'Entre vidro e eletricidade,',
+      'Corações elétricos perdem o tom.',
+      'Nada vai me deter.',
+      'Ecos digitais desafiam a consciência,'
+    ]
+  },
+  {
+    heading: '[Chorus]',
+    lines: [
+      'Neon Shards Breaker,',
+      'Quebrando o céu em laser,',
+      'Entre os destroços da escuridão,',
+      'Reescrevo o código da criação.'
+    ]
+  },
+  {
+    heading: '[Verse 2]',
+    lines: [
+      'Mas o pulso da máquina vibra em mim,',
+      'Transformando cada queda em um sim,'
+    ]
+  },
+  {
+    heading: '[Bridge]',
+    lines: [
+      'Fragmentos brilham como estrelas artificiais,',
+      'Enquanto os sistemas perdem seus sinais,',
+      'No silêncio após a explosão,',
+      'Ainda pulsa meu coração.'
+    ]
+  },
+  {
+    heading: '[Final Chorus]',
+    lines: [
+      'Neon Shards Breaker,',
+      'O impossível não vai me parar,',
+      'Das quebras nasce uma nova visão,',
+      'Feita de eletricidade em expansão.'
+    ]
+  },
+  {
+    heading: '[Outro]',
+    lines: [
+      'Quando as luzes voltarem a acender,',
+      'Meu nome vai permanecer.',
+      'Neon Shards Breaker',
+      'Neon Shards Breaker',
+      'Neon Shards Breaker'
+    ]
+  }
+];
 const SPECIAL_LEVEL_PALETTES: readonly (readonly string[])[] = [
   ['#00eaff', '#ff24e4', '#a6ff00', '#ff7a00'],
   ['#ff4d00', '#ffd400', '#ff2d55', '#ff8a00'],
@@ -644,6 +703,9 @@ export default function Home() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const backgroundMusicRef = useRef<HTMLAudioElement | null>(null);
+  const bonusMusicRef = useRef<HTMLAudioElement | null>(null);
+  const [bonusAudioError, setBonusAudioError] = useState<string | null>(null);
+  const [bonusRollDuration, setBonusRollDuration] = useState(90);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -933,13 +995,23 @@ export default function Home() {
 
     return 1;
   });
+  const [bossDefeated, setBossDefeated] = useState(() => {
+    if (typeof window === 'undefined') return false;
+
+    try {
+      return window.localStorage.getItem('neon_shards_boss_defeated') === 'true';
+    } catch (error) {
+      console.warn('Unable to load Alien Outpost completion status.', error);
+      return false;
+    }
+  });
   const [rewardAdReady, setRewardAdReady] = useState(false);
   const [rewardAdLoading, setRewardAdLoading] = useState(false);
   const [rewardAdError, setRewardAdError] = useState<string | null>(null);
   const reviveRequestedRef = useRef(false);
 
   const startBackgroundMusic = useCallback((enabled = soundEnabled) => {
-    if (!enabled || splashVisible || activeTab === 'play' || isPlaying) return;
+    if (!enabled || splashVisible || activeTab === 'play' || activeTab === 'bonus_credits' || isPlaying) return;
 
     if (!backgroundMusicRef.current) {
       backgroundMusicRef.current = new Audio('/assets/bg-music.mp3');
@@ -953,12 +1025,43 @@ export default function Home() {
   }, [activeTab, isPlaying, soundEnabled, splashVisible]);
 
   useEffect(() => {
-    if (!splashVisible && soundEnabled && activeTab !== 'play' && !isPlaying) {
+    if (!splashVisible && soundEnabled && activeTab !== 'play' && activeTab !== 'bonus_credits' && !isPlaying) {
       startBackgroundMusic();
     } else {
       backgroundMusicRef.current?.pause();
     }
   }, [activeTab, isPlaying, soundEnabled, splashVisible, startBackgroundMusic]);
+
+  useEffect(() => {
+    if (activeTab !== 'bonus_credits') return;
+
+    const audio = new Audio('/assets/Musica%20Bonus%20Neon%20Shards%20Breaker.mp3');
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = 0.4;
+    bonusMusicRef.current = audio;
+
+    const updateRollDuration = () => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setBonusRollDuration(audio.duration);
+      }
+    };
+    audio.addEventListener('loadedmetadata', updateRollDuration);
+
+    void audio.play().then(() => {
+      setBonusAudioError(null);
+    }).catch((error: unknown) => {
+      console.warn('Bonus credits music playback failed:', error);
+      setBonusAudioError('Não foi possível iniciar a música. Toque em tentar novamente.');
+    });
+
+    return () => {
+      audio.removeEventListener('loadedmetadata', updateRollDuration);
+      audio.pause();
+      audio.currentTime = 0;
+      if (bonusMusicRef.current === audio) bonusMusicRef.current = null;
+    };
+  }, [activeTab]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const alienImageRef = useRef<HTMLImageElement | null>(null);
@@ -1644,6 +1747,12 @@ export default function Home() {
         ) {
           boss.victoryHandled = true;
           unlockNextLevel(BOSS_LEVEL_INDEX);
+          setBossDefeated(true);
+          try {
+            window.localStorage.setItem('neon_shards_boss_defeated', 'true');
+          } catch (error) {
+            console.error('Unable to save Alien Outpost completion status.', error);
+          }
           setIsPlaying(false);
           setShowGameSummary('won');
           sfx.playLevelComplete();
@@ -2877,6 +2986,27 @@ export default function Home() {
                   <ChevronRight className="h-5 w-5 text-[#00f3ff] transition-transform group-hover:translate-x-1" />
                 </button>
 
+                {bossDefeated && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('bonus_credits');
+                    }}
+                    className="group flex w-full items-center justify-between rounded-xl border border-[#ff24e4]/55 bg-gradient-to-r from-[#10141b]/95 to-[#211024]/90 p-4 text-left shadow-[0_0_16px_rgba(255,36,228,0.12)] transition-all hover:border-[#00f3ff] hover:shadow-[0_0_22px_rgba(0,243,255,0.24)] active:scale-[0.98]"
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="rounded-lg border border-[#ff24e4]/40 bg-[#ff24e4]/10 p-2 text-[#ff24e4]">
+                        <Music className="h-5 w-5" />
+                      </span>
+                      <span className="flex flex-col">
+                        <span className="font-sora text-sm font-bold text-white">🎵 Música Bônus</span>
+                        <span className="font-mono text-[9px] tracking-wider text-[#00f3ff]">ALIEN OUTPOST DEFEATED • UNLOCKED</span>
+                      </span>
+                    </span>
+                    <ChevronRight className="h-5 w-5 text-[#00f3ff] transition-transform group-hover:translate-x-1" />
+                  </button>
+                )}
+
                 {/* ACTIVE SHIP CONTAINER */}
                 <div className="bg-[#1c1b1d]/60 backdrop-blur-md p-5 rounded-xl border border-[#00f3ff]/20 relative overflow-hidden">
                   <div className="pointer-events-none absolute top-2 right-2 opacity-10">
@@ -3126,6 +3256,7 @@ export default function Home() {
                       </div>
                     </motion.div>
                   )}
+
                 </AnimatePresence>
 
                 {/* PAUS CODE STAGE OVERLAYS (WHILE PLAYING) */}
@@ -3592,6 +3723,108 @@ export default function Home() {
               </div>
             </motion.div>
           )}
+
+          {activeTab === 'bonus_credits' && (
+            <motion.section
+              key="bonus-credits"
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -14 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              aria-label="Créditos Bônus"
+              className="relative flex h-[min(72vh,720px)] min-h-[480px] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-[#00f3ff]/40 bg-[#05070d]/95 shadow-[0_0_30px_rgba(0,243,255,0.12),0_0_55px_rgba(255,36,228,0.1)]"
+            >
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(0,243,255,0.12),transparent_55%),linear-gradient(rgba(0,243,255,0.06)_1px,transparent_1px)] [background-size:auto,100%_5px]" />
+
+              <header className="relative z-10 flex items-center justify-between border-b border-[#00f3ff]/25 bg-[#05070d]/90 px-4 py-3 sm:px-6">
+                <div>
+                  <p className="font-mono text-[9px] font-bold tracking-[0.3em] text-[#ff24e4]">SECRET REWARD UNLOCKED</p>
+                  <h2 className="font-sora text-lg font-black tracking-wider text-[#00f3ff]">CRÉDITOS BÔNUS</h2>
+                </div>
+                <Music className="h-5 w-5 text-[#ff24e4]" aria-hidden="true" />
+              </header>
+
+              <div className="bonus-credits-viewport relative z-0 flex-1 overflow-hidden">
+                <div
+                  className="bonus-credits-track flex flex-col"
+                  style={{ animationDuration: `${bonusRollDuration}s` }}
+                >
+                  {Array.from({ length: 2 }, (_, copyIndex) => (
+                    <article
+                      key={`bonus-credits-copy-${copyIndex}`}
+                      aria-hidden={copyIndex === 1}
+                      className="bonus-credits-copy flex shrink-0 flex-col items-center px-5 pb-12 pt-8 text-center sm:px-10"
+                    >
+                      <p className="font-mono text-[10px] tracking-[0.3em] text-[#849495]">NEON SHARDS BREAKER • BONUS TRACK</p>
+                      <h3 className="mt-4 font-sora text-2xl font-black text-white drop-shadow-[0_0_12px_rgba(0,243,255,0.65)]">
+                        ALIEN OUTPOST DESTRUÍDO
+                      </h3>
+                      <p className="mt-3 max-w-lg font-mono text-xs leading-6 text-[#b8fbff]">
+                        Parabéns, piloto! Você derrotou o Alien Outpost e garantiu a segurança dos setores.
+                        Obrigado por jogar e fazer parte desta jornada neon.
+                      </p>
+                      <div className="my-7 h-px w-full max-w-md bg-gradient-to-r from-transparent via-[#ff24e4]/70 to-transparent" />
+                      <div className="mb-8 space-y-2">
+                        <p className="font-mono text-[9px] tracking-[0.3em] text-[#00f3ff]">CRIAÇÃO E DESENVOLVIMENTO</p>
+                        <p className="font-sora text-base font-bold text-white">Ademilde Martins Lanes</p>
+                        <p className="pt-2 font-mono text-[9px] tracking-[0.3em] text-[#ff24e4]">TESTES</p>
+                        <p className="font-sora text-base font-bold text-white">Larissa Monteiro Lanes</p>
+                      </div>
+
+                      <div className="w-full max-w-lg space-y-8">
+                        {BONUS_CREDIT_LYRICS.map(section => (
+                          <section key={section.heading} className="space-y-2">
+                            <h4 className="font-mono text-xs font-black tracking-[0.28em] text-[#ff24e4] drop-shadow-[0_0_8px_rgba(255,36,228,0.65)]">
+                              {section.heading}
+                            </h4>
+                            <div className="space-y-1">
+                              {section.lines.map(line => (
+                                <p key={line} className="font-sora text-sm leading-6 text-[#d9faff] drop-shadow-[0_0_7px_rgba(0,243,255,0.35)]">
+                                  {line}
+                                </p>
+                              ))}
+                            </div>
+                          </section>
+                        ))}
+                      </div>
+                      <p className="mt-10 font-mono text-[9px] tracking-[0.25em] text-[#849495]">© LANES TECHNOLOGY IA • 2026</p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+
+              {bonusAudioError && (
+                <div className="relative z-10 flex items-center justify-center gap-3 border-t border-[#ff24e4]/25 bg-[#05070d]/95 px-3 py-2">
+                  <p role="status" className="font-mono text-[9px] text-[#fface8]">{bonusAudioError}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const audio = bonusMusicRef.current;
+                      if (!audio) return;
+                      void audio.play().then(() => {
+                        setBonusAudioError(null);
+                      }).catch((error: unknown) => {
+                        console.warn('Bonus credits music playback retry failed:', error);
+                        setBonusAudioError('A música ainda não pôde ser reproduzida.');
+                      });
+                    }}
+                    className="rounded border border-[#00f3ff]/50 px-2 py-1 font-mono text-[9px] font-bold text-[#00f3ff] hover:bg-[#00f3ff]/10"
+                  >
+                    TENTAR NOVAMENTE
+                  </button>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('menu')}
+                className="relative z-10 flex items-center justify-center gap-2 border-t border-[#00f3ff]/25 bg-[#0b1018] px-4 py-3 font-mono text-xs font-bold tracking-[0.2em] text-[#00f3ff] transition-colors hover:bg-[#00f3ff]/10 hover:text-white"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                VOLTAR AO MENU
+              </button>
+            </motion.section>
+          )}
         </AnimatePresence>
       </main>
 
@@ -3670,6 +3903,7 @@ export default function Home() {
                     localStorage.clear();
                     setCredits(12450);
                     setHighestLevelUnlocked(1);
+                    setBossDefeated(false);
                     setCampaignSectorIndex(0);
                     setPaddles([
                       {

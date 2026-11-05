@@ -22,6 +22,17 @@
   }
 }
 
+@keyframes creditsRoll {
+  0% { transform: translateY(15vh); }
+  100% { transform: translateY(calc(15vh - 50%)); }
+}
+
+.bonus-credits-track {
+  animation-name: creditsRoll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
 .animate-scanline {
   animation: scanline 8s linear infinite;
 }
