@@ -2333,18 +2333,14 @@ export default function Home() {
         const isFlashing = now < activeBoss.flashUntil;
 
         ctx.save();
-        ctx.shadowBlur = 22;
-        ctx.shadowColor = isFlashing ? '#ff526e' : '#00f3ff';
         if (bossImage?.complete && bossImage.naturalWidth > 0) {
-          ctx.globalAlpha = isFlashing ? 0.9 : 1;
-          ctx.globalCompositeOperation = 'screen';
           ctx.filter = isFlashing
-            ? 'brightness(1.8) sepia(1) saturate(5) hue-rotate(300deg)'
+            ? 'sepia(1) saturate(8) hue-rotate(315deg)'
             : 'none';
           ctx.drawImage(bossImage, bossLeft, bossTop, activeBoss.width, activeBoss.height);
         } else {
-          ctx.fillStyle = isFlashing ? '#ffffff' : '#09233a';
-          ctx.strokeStyle = isFlashing ? '#ff526e' : '#00f3ff';
+          ctx.fillStyle = isFlashing ? '#ff334f' : '#09233a';
+          ctx.strokeStyle = isFlashing ? '#ff334f' : '#49616d';
           ctx.lineWidth = 3;
           ctx.beginPath();
           ctx.ellipse(activeBoss.x, activeBoss.y, activeBoss.width / 2, activeBoss.height / 2, 0, 0, Math.PI * 2);
