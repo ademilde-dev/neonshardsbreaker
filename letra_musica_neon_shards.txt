@@ -1,0 +1,64 @@
+Vamos implementar uma recompensa especial pós-jogo (Bônus Secreto): uma tela de "Créditos Bônus" com reprodução em loop da faixa musical do jogo e rolagem contínua da letra.
+
+1. Armazenamento e Carregamento do Arquivo de Áudio:
+   - Certifique-se de referenciar o arquivo de áudio localizado em public/ (ou assets):
+     Nome do arquivo: "Musica Bonus Neon Shards Breaker.mp3" (se preferir renomear ou referenciar codificado: encodeURI('/Musica Bonus Neon Shards Breaker.mp3')).
+   - Utilize a API de áudio nativa do HTML5 (new Audio(...) ou tag <audio>) com as propriedades loop = true e volume calibrado. Ao sair da tela de créditos, o áudio DEVE ser pausado e o currentTime resetado para 0.
+
+2. Gatilho de Desbloqueio e Acesso no Menu Principal:
+   - Crie/atualize uma chave booleana no localStorage (ex: 'neon_shards_boss_defeated' ou 'alien_outpost_beaten': 'true') assim que o jogador destruir o Chefe Alien na Fase 17.
+   - Na tela do Menu Principal (MenuScreen):
+     * Verifique se essa chave está ativa.
+     * Se estiver ativa, exiba um botão/link com estética neon com o texto: "🎵 Música Bônus" (ou "Música Bônus Desbloqueada!").
+     * Ao clicar (Desktop/Web) ou tocar (Touch/Android), mude o estado da aplicação para navegar até a nova tela 'BONUS_CREDITS'.
+     * Adicione um botão "Voltar ao Menu" dentro dessa nova tela para permitir o retorno ao menu principal a qualquer momento.
+
+3. Tela de Créditos Bônus com Scroll Vertical Contínuo (Auto-Scroll Loop):
+   - Mantenha a estrutura base visual da tela de créditos atual (fundo escuro, estilo neon e tipografia do jogo), mas organize o conteúdo em um contêiner com rolagem automática suave.
+   - Assim que a tela é montada, inicie a reprodução da música "Musica Bonus Neon Shards Breaker.mp3" em loop.
+   - Estrutura do conteúdo que deve subir em scroll contínuo:
+     a) Créditos gerais do jogo e congratulações pela vitória sobre o Alien Outpost.
+     b) A letra completa da música formatada em blocos neon destacados:
+
+[Verse 1]
+Códigos dançam na chuva de neon,
+Neon Shards Breaker,
+Nascido pra vencer,
+Entre vidro e eletricidade,
+Corações elétricos perdem o tom.
+Nada vai me deter.
+Ecos digitais desafiam a consciência,
+
+[Chorus]
+Neon Shards Breaker,
+Quebrando o céu em laser,
+Entre os destroços da escuridão,
+Reescrevo o código da criação.
+
+[Verse 2]
+Mas o pulso da máquina vibra em mim,
+Transformando cada queda em um sim,
+
+[Bridge]
+Fragmentos brilham como estrelas artificiais,
+Enquanto os sistemas perdem seus sinais,
+No silêncio após a explosão,
+Ainda pulsa meu coração.
+
+[Final Chorus]
+Neon Shards Breaker,
+O impossível não vai me parar,
+Das quebras nasce uma nova visão,
+Feita de eletricidade em expansão.
+
+[Outro]
+Quando as luzes voltarem a acender,
+Meu nome vai permanecer.
+Neon Shards Breaker
+Neon Shards Breaker
+Neon Shards Breaker
+
+4. Efeito de Auto-Scroll Infinito (Seamless Loop):
+   - Implemente a animação de subida lenta do texto usando CSS keyframes (@keyframes creditsRoll { 0% { transform: translateY(100vh); } 100% { transform: translateY(-100%); } }) com animation-iteration-count: infinite ou via requestAnimationFrame/scrollTop, sincronizando para que, quando o texto terminar de passar, ele recomece suavemente do início em loop junto com a música.
+
+Por favor, forneça as modificações no estado de navegação, persistência do desbloqueio no localStorage e o componente da tela de Créditos Bônus.

@@ -350,6 +350,7 @@ interface Ball {
   vx: number;
   vy: number;
   radius: number;
+  speedBoostScale?: number;
 }
 
 interface Alien {
@@ -402,8 +403,23 @@ const ALIEN_REVEAL_CELLS = Array.from(
 const ALIEN_REVEAL_STEPS = ALIEN_REVEAL_CELLS.length;
 const BALL_LAUNCH_VX = 2.4;
 const BALL_LAUNCH_VY = -4.2;
+const GAME_CANVAS_HEIGHT = 800;
+const PADDLE_BOTTOM_OFFSET = 60;
+const BALL_BOOST_MULTIPLIER = 1.5;
 const BOSS_LEVEL_INDEX = 16;
 const BOSS_MAX_HP = 28;
+const getPaddleY = (canvasHeight: number) => canvasHeight - PADDLE_BOTTOM_OFFSET;
+const getMaxBallSpeed = (levelIndex: number) => levelIndex === 0
+  ? 6.5
+  : Math.min(11.5, 8.5 + (levelIndex - 1) * 0.35);
+const resetBallSpeedBoost = (ball: Ball) => {
+  const boostScale = ball.speedBoostScale ?? 1;
+  if (boostScale > 1) {
+    ball.vx /= boostScale;
+    ball.vy /= boostScale;
+  }
+  ball.speedBoostScale = 1;
+};
 const BONUS_CREDIT_LYRICS = [
   {
     heading: '[Verse 1]',
@@ -1353,7 +1369,7 @@ export default function Home() {
     bricks: [] as BrickState[],
     paddleTouchDirection: null as 'left' | 'right' | null,
     canvasWidth: 600,
-    canvasHeight: 720,
+    canvasHeight: GAME_CANVAS_HEIGHT,
     levelIndex: 0,
     ballLaunchTimer: 0,
     keys: {} as Record<string, boolean>,
@@ -1400,7 +1416,7 @@ export default function Home() {
           const gameState = stateRef.current;
           gameState.balls = [{
             x: gameState.paddleX,
-            y: 652,
+            y: getPaddleY(gameState.canvasHeight) - 8,
             vx: 0,
             vy: 0,
             radius: 8,
@@ -1575,7 +1591,7 @@ export default function Home() {
     stateRef.current.balls = [
       {
         x: 300,
-        y: 600,
+        y: getPaddleY(stateRef.current.canvasHeight) - 60,
         vx: BALL_LAUNCH_VX,
         vy: BALL_LAUNCH_VY,
         radius: 8
@@ -1601,7 +1617,7 @@ export default function Home() {
         const ball = stateRef.current.balls[0];
         if (ball) {
           ball.x = stateRef.current.paddleX;
-          ball.y = 660 - ball.radius;
+          ball.y = getPaddleY(stateRef.current.canvasHeight) - ball.radius;
           ball.vx = BALL_LAUNCH_VX;
           ball.vy = BALL_LAUNCH_VY;
           stateRef.current.awaitingBallLaunch = false;
@@ -1633,7 +1649,7 @@ export default function Home() {
       const ball = stateRef.current.balls[0];
       if (ball) {
         ball.x = stateRef.current.paddleX;
-        ball.y = 660 - ball.radius;
+        ball.y = getPaddleY(stateRef.current.canvasHeight) - ball.radius;
         ball.vx = BALL_LAUNCH_VX;
         ball.vy = BALL_LAUNCH_VY;
         stateRef.current.awaitingBallLaunch = false;
@@ -1823,7 +1839,7 @@ export default function Home() {
 
         // Catch check
         const halfW = state.paddleWidth / 2;
-        const paddleY = 660;
+        const paddleY = getPaddleY(state.canvasHeight);
         if (
           pu.y + pu.radius >= paddleY &&
           pu.y - pu.radius <= paddleY + 12 &&
@@ -1970,7 +1986,7 @@ export default function Home() {
 
         const projectileTop = projectile.y - projectile.size / 2;
         const projectileBottom = projectile.y + projectile.size / 2;
-        const paddleTop = 660;
+        const paddleTop = getPaddleY(state.canvasHeight);
         const hitPaddle = projectileBottom >= paddleTop
           && projectileTop <= paddleTop + 12
           && projectile.x + projectile.size / 2 >= state.paddleX - state.paddleWidth / 2
@@ -1981,6 +1997,7 @@ export default function Home() {
             const nextLives = Math.max(0, livesRef.current - 1);
             livesRef.current = nextLives;
             setLives(nextLives);
+            state.balls.forEach(resetBallSpeedBoost);
             lostLifeFromBossAttack = true;
             sfx.playBallLost();
 
@@ -2017,7 +2034,7 @@ export default function Home() {
       state.balls.forEach(ball => {
         if (state.awaitingBallLaunch) {
           ball.x = state.paddleX;
-          ball.y = 660 - ball.radius;
+          ball.y = getPaddleY(state.canvasHeight) - ball.radius;
           nextBallsList.push(ball);
           return;
         }
@@ -2190,7 +2207,7 @@ export default function Home() {
 
         // PADDLE BOUNCE PHYSICS
         const halfW = state.paddleWidth / 2;
-        const paddleY = 660;
+        const paddleY = getPaddleY(state.canvasHeight);
         const paddleHeight = 12;
 
         if (
@@ -2213,9 +2230,7 @@ export default function Home() {
             ? 1.003
             : (state.difficulty === 'hard' ? 1.015 : state.difficulty === 'easy' ? 1.004 : 1.008)
               + Math.max(0, state.levelIndex - 1) * 0.001;
-          const maxBallSpeed = state.levelIndex === 0
-            ? 6.5
-            : Math.min(11.5, 8.5 + (state.levelIndex - 1) * 0.35);
+          const maxBallSpeed = getMaxBallSpeed(state.levelIndex);
           const speed = Math.min(maxBallSpeed, currentSpeed * dynamicAcceleration);
 
           ball.vx = speed * Math.sin(bounceAngle);
@@ -2248,7 +2263,7 @@ export default function Home() {
         if (livesRef.current > 0) {
           state.balls.push({
             x: state.paddleX,
-            y: 652,
+            y: getPaddleY(state.canvasHeight) - 8,
             vx: 0,
             vy: 0,
             radius: 8
@@ -2259,13 +2274,14 @@ export default function Home() {
         const nextLives = Math.max(0, livesRef.current - 1);
         livesRef.current = nextLives;
         setLives(nextLives);
+        state.balls.forEach(resetBallSpeedBoost);
         sfx.playBallLost();
 
         if (nextLives > 0) {
           // Respawn ball on paddle
           state.balls.push({
             x: state.paddleX,
-            y: 652,
+            y: getPaddleY(state.canvasHeight) - 8,
             vx: 0,
             vy: 0,
             radius: 8
@@ -2305,7 +2321,7 @@ export default function Home() {
       ctx.lineWidth = 2;
 
       // Beautiful retro capsule gradient
-      const paddleY = 660;
+      const paddleY = getPaddleY(state.canvasHeight);
       const paddleW = state.paddleWidth;
       const xStart = state.paddleX - paddleW / 2;
       const padGrad = ctx.createLinearGradient(xStart, 0, xStart + paddleW, 0);
@@ -2503,7 +2519,7 @@ export default function Home() {
         ctx.textAlign = 'center';
         ctx.shadowBlur = 10;
         ctx.shadowColor = '#00f3ff';
-        ctx.fillText('PRESS SPACE OR TAP TO LAUNCH', state.canvasWidth / 2, 620);
+        ctx.fillText('PRESS SPACE OR TAP TO LAUNCH', state.canvasWidth / 2, getPaddleY(state.canvasHeight) - 40);
         ctx.restore();
       }
 
@@ -3110,13 +3126,13 @@ export default function Home() {
               </div>
 
               {/* GAME SCREEN CANVAS STAGE */}
-              <div className="relative w-full aspect-[6/7.2] bg-[#050505] rounded-xl border-2 border-[#3a494b] overflow-hidden group shadow-2xl shadow-[#ff24e4]/10">
+              <div className="relative w-full aspect-[3/4] bg-[#050505] rounded-xl border-2 border-[#3a494b] overflow-hidden group shadow-2xl shadow-[#ff24e4]/10">
                 
                 {/* MAIN RETRO CANVAS */}
                 <canvas 
                   ref={canvasRef}
                   width={600}
-                  height={720}
+                  height={GAME_CANVAS_HEIGHT}
                   className="w-full h-full block touch-none cursor-ew-resize"
                   onPointerDown={handlePointerDown}
                   onPointerMove={handlePointerMove}
@@ -3281,25 +3297,48 @@ export default function Home() {
                 )}
               </div>
 
-              {/* CONTROLS GUIDE PANEL & INTERACTIVE TOUCH SENSORS */}
-              <div className="mt-4 p-3 bg-[#1c1b1d]/80 rounded-xl border border-[#3a494b] text-center flex justify-between items-center">
-                <p className="font-mono text-[10px] text-[#849495] tracking-wide text-left">
-                  💻 DESKTOP: Use <span className="text-[#00f3ff] font-bold">A / D</span>, <span className="text-[#00f3ff] font-bold">← / →</span>, or drag with mouse.<br/>
-                  📱 MOBILE: Drag directly on screen, or use buttons below.
-                </p>
+              {/* COMPACT BALL SPEED CONTROL */}
+              <div className="mt-2 flex h-9 w-full justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isPlaying || isPaused || showGameSummary) return;
 
-                {isPlaying ? (
-                  <button 
-                    onClick={() => setIsPaused(true)}
-                    className="p-2 border border-[#849495]/40 rounded text-xs font-mono text-[#849495] hover:text-white"
-                  >
-                    Hold
-                  </button>
-                ) : null}
+                    const gameState = stateRef.current;
+                    const maxSpeed = getMaxBallSpeed(gameState.levelIndex);
+                    let boosted = false;
+
+                    gameState.balls.forEach(ball => {
+                      const currentSpeed = Math.hypot(ball.vx, ball.vy);
+                      if (currentSpeed <= 0) return;
+
+                      const targetSpeed = Math.min(
+                        maxSpeed,
+                        Math.max(currentSpeed * BALL_BOOST_MULTIPLIER, Math.min(5, maxSpeed))
+                      );
+                      if (targetSpeed <= currentSpeed) return;
+
+                      const speedScale = targetSpeed / currentSpeed;
+                      ball.vx *= speedScale;
+                      ball.vy *= speedScale;
+                      ball.speedBoostScale = (ball.speedBoostScale ?? 1) * speedScale;
+                      boosted = true;
+                    });
+
+                    if (boosted) sfx.playPowerup();
+                  }}
+                  disabled={!isPlaying || isPaused || !!showGameSummary}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[#00f3ff]/45 bg-[#00f3ff]/10 px-4 font-mono text-[10px] font-bold tracking-[0.16em] text-[#00f3ff] shadow-[0_0_12px_rgba(0,243,255,0.12)] transition-all hover:border-[#00f3ff] hover:bg-[#00f3ff]/20 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Aumentar a velocidade da bolinha"
+                  title="Impulso de velocidade limitado ao máximo seguro do nível"
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  SPEED UP
+                </button>
               </div>
 
               {/* INDEPENDENT CONTROL SENSORS ON THE FOOTER BLOCK */}
-              <div className="mt-2 grid grid-cols-2 gap-4 h-20 md:h-16 w-full relative z-10 touch-none">
+              <div className="mt-2 grid h-14 w-full grid-cols-2 gap-4 relative z-10 touch-none md:h-16">
                 <button 
                   onMouseDown={() => { stateRef.current.paddleTouchDirection = 'left'; }}
                   onMouseUp={() => { stateRef.current.paddleTouchDirection = null; }}
@@ -3694,7 +3733,7 @@ export default function Home() {
 
                 <section className="w-full space-y-5">
                   <div>
-                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.35em] text-[#00f3ff]">CRIADOR</p>
+                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.35em] text-[#00f3ff]">CRIADOR / DESENVOLVEDOR</p>
                     <p className="mt-1 font-sora text-lg font-bold text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]">Ademilde Martins Lanes</p>
                   </div>
 
@@ -3708,7 +3747,7 @@ export default function Home() {
 
                 <div className="flex flex-col items-center gap-3">
                   <span className="rounded-full border border-[#00f3ff]/35 bg-[#00f3ff]/[0.07] px-4 py-1.5 font-mono text-[10px] tracking-wider text-[#b6c5ca] shadow-[0_0_12px_rgba(0,243,255,0.1)]">
-                    VERSÃO 1.0 <span className="px-1 text-[#00f3ff]">•</span> 2026
+                    VERSÃO v1.0.9 <span className="px-1 text-[#00f3ff]">•</span> 2026
                   </span>
                   <p className="font-sora text-sm font-semibold tracking-wide text-white">© Lanes Technology IA</p>
                 </div>
